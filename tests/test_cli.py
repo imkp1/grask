@@ -117,3 +117,30 @@ def test_the_real_store_sees_the_new_tables(tmp_path: Path):
 
     assert {"asks", "answers"} <= names
     assert "criterion_results" not in names
+
+
+def test_the_skill_ships_inside_the_package(tmp_path: Path, capsys):
+    """`skill --install` must work from an installed wheel, not just a checkout.
+
+    The file used to sit at the repo root, which reaches an sdist but never a
+    wheel — so the documented "copy SKILL.md into your skills directory" step
+    was unfollowable for anyone who installed rather than cloned. Reading it
+    through `importlib.resources` is what makes the two cases identical.
+    """
+    code = main(["skill", "--install", "--dir", str(tmp_path)])
+    capsys.readouterr()
+
+    installed = tmp_path / "grill" / "SKILL.md"
+    assert code == 0
+    # The directory name is the slash command; `/grill` does not exist without it.
+    assert installed.is_file()
+    assert installed.read_text(encoding="utf-8").startswith("---\nname: grill\n")
+
+
+def test_the_skill_prints_without_installing(tmp_path: Path, capsys):
+    """Bare `grill skill` writes nothing — inspecting it is not installing it."""
+    code = main(["skill", "--dir", str(tmp_path)])
+
+    assert code == 0
+    assert "name: grill" in capsys.readouterr().out
+    assert list(tmp_path.iterdir()) == []

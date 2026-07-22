@@ -1,12 +1,20 @@
 name: CI
 
+# Every branch, not just main. Filtering to `main` meant a branch could be
+# merged on the strength of a local run, and the CI configuration itself was
+# the thing least likely to have been exercised before it landed.
 on:
   push:
-    branches: [main]
   pull_request:
 
 permissions:
   contents: read
+
+# A pull request from a branch in this repo fires both triggers. Keep the
+# newest run per ref and cancel the rest.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check:
@@ -62,3 +70,14 @@ jobs:
           # The hook takes its payload on stdin and must exit 0 on anything,
           # including a payload it cannot use. It never has a --help to call.
           echo '{}' | grill-hook
+
+      # SKILL.md is read out of the installed package, so this passes only if
+      # the build actually shipped it in the wheel. A checkout is not evidence:
+      # the file was present in the tree the whole time it was missing from the
+      # artifact everyone installs.
+      - name: the shipped skill survives packaging
+        run: |
+          cd "$(mktemp -d)"
+          grill skill --install --dir ./skills
+          test -f ./skills/grill/SKILL.md
+          head -2 ./skills/grill/SKILL.md | grep -q '^name: grill$'

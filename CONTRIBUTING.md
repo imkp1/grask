@@ -61,7 +61,7 @@ signatures; both are commented in `pyproject.toml`. Don't add a third without sa
 |---|---|
 | `src/grill/` | The package. `llm.py` is the only module that knows a subprocess exists; `cli.py` is the only one that owns a terminal. |
 | `tests/` | One file per module, offline. |
-| `skill/SKILL.md` | The `/grill` delivery surface for Claude Code. This ships — it is not documentation. |
+| `src/grill/SKILL.md` | The `/grill` delivery surface for Claude Code. It lives inside the package because `grill skill --install` reads it from there, and only files under `src/grill/` reach the wheel. |
 | `docs/design/` | Why decisions were made. `grill-design.md` is current; the dated notes are records, and `docs/README.md` says so. |
 
 Anything non-trivial starts with a design note in `docs/design/`, dated, stating what is

@@ -17,6 +17,8 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
+from importlib import resources
+from pathlib import Path
 
 from grill.ask import (
     ERROR,
@@ -40,6 +42,30 @@ NOTHING_PENDING = "nothing to ask about."
 # Claude's native question UI takes at most 4 options; rows over the cap are
 # left pending for the terminal path rather than consumed.
 MAX_UI_OPTIONS = 4
+
+# Where Claude Code looks for user-level skills. A skill is one directory
+# holding one SKILL.md, and the directory name is the slash command — so this
+# has to end in `grill/` for `/grill` to exist.
+DEFAULT_SKILLS_DIR = Path.home() / ".claude" / "skills"
+
+
+def _skill(args: argparse.Namespace) -> int:
+    """Print the shipped `/grill` skill, or write it into a skills directory.
+
+    The file ships inside the package, so this works identically from a clone
+    and from an installed wheel. Telling the user to copy a path out of a
+    checkout only ever worked for people who had a checkout.
+    """
+    text = (resources.files("grill") / "SKILL.md").read_text(encoding="utf-8")
+    if not args.install:
+        print(text, end="")
+        return 0
+
+    target = (args.dir or DEFAULT_SKILLS_DIR) / "grill" / "SKILL.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text, encoding="utf-8")
+    print(f"installed {target}")
+    return 0
 
 
 class TerminalConsole:
@@ -184,8 +210,22 @@ def main(
     record_parser.add_argument("--wrong", action="store_true")
     record_parser.add_argument("--objection")
 
+    skill_parser = sub.add_parser(
+        "skill", help="print the /grill skill, or install it with --install"
+    )
+    skill_parser.add_argument(
+        "--install", action="store_true", help="write it into a skills directory"
+    )
+    # Project-level skills live in `.claude/skills` next to a repo rather than
+    # under $HOME, and that is a real setup, not just a test seam.
+    skill_parser.add_argument(
+        "--dir", type=Path, help=f"skills directory (default: {DEFAULT_SKILLS_DIR})"
+    )
+
     args = parser.parse_args(argv)
 
+    if args.command == "skill":
+        return _skill(args)
     if args.command == "serve":
         return _serve(store_factory)
     if args.command == "record":

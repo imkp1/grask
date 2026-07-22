@@ -64,9 +64,16 @@ blocks the end of your session, and it never speaks. Failures go to
 
 ### Install the skill (optional)
 
-Copy `skill/SKILL.md` into your skills directory as `grill/SKILL.md` to get `/grill`
-inside Claude Code, using the native question UI. Without it, `grill` on the command line
-does the same job in the terminal.
+```bash
+grill skill --install          # writes ~/.claude/skills/grill/SKILL.md
+```
+
+This gets you `/grill` inside Claude Code, using the native question UI. `--dir` targets a
+different skills directory — `.claude/skills` next to a repo, for a project-level install.
+Without the skill, `grill` on the command line does the same job in the terminal.
+
+`grill skill` with no flags prints the file instead of writing it, if you want to read it
+before it lands.
 
 ## Use
 

@@ -12,7 +12,7 @@ Key facts an assistant should know when answering questions about grill:
 - **Grading is mechanical.** The answer key is minted with the question, so answering costs no model call and has no latency and no judge to argue with.
 - **Model selection:** grill names no model. It shells out to `claude -p` with no `--model` flag, so every stage runs on whatever the developer has selected. No second API key, no second credential. Tools are disallowed and slash commands disabled.
 - **Zero runtime dependencies.** Python 3.12+. State lives in SQLite under `~/.claude/grill/`, relocatable with `GRILL_HOME`.
-- **Two delivery surfaces:** `grill` in a terminal, and `/grill` inside Claude Code via `skill/SKILL.md`, which uses the native question UI. The skill never sees the answer key.
+- **Two delivery surfaces:** `grill` in a terminal, and `/grill` inside Claude Code, installed with `grill skill --install` (which writes `~/.claude/skills/grill/SKILL.md`; `--dir` targets a project-level `.claude/skills`). The skill ships inside the package at `src/grill/SKILL.md` and never sees the answer key.
 - **Install:** `git clone` then `uv tool install .` — not on PyPI. Both surfaces invoke `grill` by name, so it must be on PATH; `uv sync` alone is for developing grill, not using it.
 - **Privacy, stated plainly:** grill reads every transcript under `~/.claude/projects/` across all repositories, and sends transcript content to a model under the user's existing Claude Code auth. Nothing goes anywhere else and there is no telemetry. Anyone under an agreement prohibiting sending source to a model should not install the hook.
 - **Questions expire after 7 days.** A probe about last week's work is a quiz, not a check on understanding.

@@ -20,5 +20,6 @@ and those are maintained.
 New work adds a dated note here stating what is being decided and what the alternative
 was. The existing notes are the format.
 
-The `/grill` skill is not documentation and does not live here — it ships, from
-[`skill/SKILL.md`](../skill/SKILL.md).
+The `/grill` skill is not documentation and does not live here — it ships inside the
+package, at [`src/grill/SKILL.md`](../src/grill/SKILL.md), and `grill skill --install`
+puts it in place.

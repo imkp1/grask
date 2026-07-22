@@ -36,6 +36,9 @@ jobs:
           grill --help
           test "$(grill serve --json)" = '{"pending": null}'
           echo '{}' | grill-hook
+          # The wheel is what a `pip install` produces, so this is the only
+          # place the shipped skill can be checked against a real release.
+          grill skill --install --dir "$(mktemp -d)/skills"
 
       - uses: actions/upload-artifact@v4
         with:

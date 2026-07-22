@@ -17,8 +17,18 @@ versioning follows [SemVer](https://semver.org/) once there is a 1.0 to be compa
   is now `uv tool install .`, and the hook command is bare `grill-hook` rather than an
   absolute path into a checkout that can move.
 
+- **The `/grill` skill could not reach anyone who installed rather than cloned.** Shipping
+  it via `source-include` put it in the sdist, but nothing installs an sdist's files — pip
+  and uv build a wheel from it first, and the wheel had no `SKILL.md`. The README's "copy
+  it into your skills directory" step was therefore unfollowable outside a checkout. The
+  file now lives at `src/grill/SKILL.md`, inside the package, and `grill skill --install`
+  writes it from there. CI asserts it survives packaging, which a checkout could never
+  show: the file was present in the tree the entire time it was missing from the artifact.
+
 ### Added
 
+- `grill skill` — prints the `/grill` skill, or writes it with `--install`. `--dir`
+  targets a project-level `.claude/skills` instead of `~/.claude/skills`.
 - `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`.
 - Issue templates for bugs and for bad questions, a pull request template, and Dependabot.
 - A CI `packaging` job that installs via `uv tool install .` and runs both console
@@ -27,10 +37,14 @@ versioning follows [SemVer](https://semver.org/) once there is a 1.0 to be compa
 
 ### Changed
 
+- CI now runs on every branch, not only `main`. The previous filter meant a branch could be
+  merged on the strength of a local run, and the CI configuration was the thing least
+  likely to have been exercised before it landed.
 - CI now runs `uv sync --locked`, so lockfile drift fails rather than resolving silently.
-- `docs/skill/SKILL.md` moved to `skill/SKILL.md`. It is a shipped surface, not
-  documentation, and filing it under `docs/` said otherwise. If you installed the skill by
-  copying from the old path, nothing about your installed copy changes.
+- `docs/skill/SKILL.md` moved to `src/grill/SKILL.md`, by way of `skill/SKILL.md`. It is a
+  shipped surface, not documentation, and it has to be inside the package to ship at all.
+  If you installed the skill by copying from an old path, nothing about your installed copy
+  changes.
 
 ### Removed
 
