@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# grill local state — transcripts and anything extracted from them contain the
+# developer's own prompts and code, from every project on the machine. None of it
+# belongs in this repository.
+#
+# The tools write under GRILL_HOME (~/.claude/grill) precisely so that no default
+# path lands in a working tree. These patterns are the second line of defence for
+# a run that was pointed here explicitly with --out.
+out/
+*.local.json
+*.db
+grill.log
+triage-results.json
+corpus-run*.txt
+**/generated_probes.json
+**/calibration_results*.json
+**/boundary_results*.json

@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --all-extras --dev
+        env:
+          UV_PYTHON: ${{ matrix.python-version }}
+
+      - name: ruff
+        run: uv run ruff check .
+
+      - name: mypy
+        run: uv run mypy
+
+      # No network and no model calls: the `calibration` marker is deselected by
+      # default in pyproject, and everything else injects test doubles.
+      - name: pytest
+        run: uv run pytest -q

@@ -1,0 +1,71 @@
+[project]
+name = "grill"
+version = "0.1.0"
+description = "One question about your own code, at the end of a Claude Code session."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Kumar Prateek" }]
+keywords = ["claude-code", "learning", "code-comprehension", "developer-tools"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+    "Typing :: Typed",
+]
+# Nothing at runtime. grill shells out to the `claude` CLI the developer has
+# already installed and authenticated, which is the whole of its model access.
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/imkp1/grill"
+Repository = "https://github.com/imkp1/grill"
+Issues = "https://github.com/imkp1/grill/issues"
+
+[project.scripts]
+grill = "grill.cli:main"
+grill-hook = "grill.hook:main"
+
+[build-system]
+requires = ["uv_build>=0.11.27,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+# Calibration tests call the real model: they cost money and are not
+# deterministic. Deselected by default so the ordinary suite stays free and
+# offline; run them deliberately with `pytest -m calibration`.
+addopts = "-m 'not calibration'"
+markers = [
+    "calibration: measures real model behaviour, not our code. Costs money.",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src/grill"]
+# The package ships py.typed, which is a promise to anyone importing it. These
+# settings are what make that promise checkable rather than decorative.
+strict = true
+# The pipeline stages are injected as plain callables (`triage=`, `complete=`,
+# `store_factory=`) so control flow is testable without spending money on a
+# model. Annotating those parameters would pin test doubles to the production
+# signature, which is the seam's whole point. Everything else is checked.
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.14",
+    "mypy>=1.14",
+]
