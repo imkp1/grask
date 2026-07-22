@@ -1,0 +1,71 @@
+name: Bug report
+description: Something in grill did the wrong thing, or nothing at all.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Before you paste anything:** grill's log and database contain material
+        extracted from your own sessions. Read what you are about to paste, and
+        redact freely. A redacted report is worth far more than no report.
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where did it happen?
+      options:
+        - Capture — the SessionEnd hook, or a session that should have produced a question
+        - Asking — the `grill` command in a terminal
+        - Asking — the `/grill` skill inside Claude Code
+        - Corpus tools — survey / triage_run / capture_run
+        - Install or setup
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect instead?
+      description: |
+        Note that silence is often correct — most sessions produce no question, by
+        design. If your report is "it never asks me anything", say roughly how many
+        sessions you have ended since installing.
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Log tail
+      description: |
+        Capture is silent by construction, so the log is usually the only evidence.
+        Redact before pasting.
+      placeholder: tail -50 ~/.claude/grill/grill.log
+      render: text
+
+  - type: input
+    id: version
+    attributes:
+      label: grill version or commit
+      placeholder: "0.1.0, or the output of `git rev-parse --short HEAD`"
+    validations:
+      required: true
+
+  - type: input
+    id: env
+    attributes:
+      label: OS and Python version
+      placeholder: "macOS 15.5, Python 3.12.8"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I redacted anything from my own sessions before pasting it here.
+          required: true
+        - label: This is not a security or privacy issue. (Those go to SECURITY.md instead.)
+          required: true

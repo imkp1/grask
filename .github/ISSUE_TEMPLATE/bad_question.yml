@@ -1,0 +1,49 @@
+name: A question grill asked was bad
+description: The probe misread the session, tested nothing portable, or had a wrong answer key.
+labels: ["question-quality"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is the most useful kind of report grill can get. The pipeline's whole job
+        is to ask one question worth answering, and the failure modes are specific
+        enough to be fixable — but only if the bad question is visible.
+
+        `/wrong` inside a session records the rejection locally. This issue is how it
+        reaches the project.
+
+        **Redact.** The question quotes your session back to you.
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: What was wrong with it?
+      options:
+        - It misread what happened — the premise is false
+        - The answer key is wrong, or more than one option is right
+        - It tested recall of a local detail, not a portable mechanism
+        - It asked about something trivial, or something I obviously knew
+        - The stem contained more than one question
+        - It was a near-duplicate of a question I already got
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: probe
+    attributes:
+      label: The question, as it was asked
+      description: Stem and options, redacted as needed.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: reality
+    attributes:
+      label: What was actually going on in that session?
+      description: |
+        The gap between what grill thought you accepted and what you actually did is
+        the whole signal here.
+    validations:
+      required: true

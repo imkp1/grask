@@ -1,0 +1,19 @@
+version: 2
+updates:
+  # grill has no runtime dependencies, so there is nothing to watch on the Python
+  # side beyond the dev group, which uv.lock pins and CI verifies with --locked.
+  # Actions are the real supply chain here: they run with a token, on every push.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "ci"
+
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    groups:
+      dev-dependencies:
+        patterns: ["*"]

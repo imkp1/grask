@@ -1,0 +1,79 @@
+name: Release
+
+# Tag-driven. Nothing here runs on an ordinary push, so this workflow is inert
+# until someone deliberately tags a version.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+
+      # A tag that disagrees with pyproject produces a release nobody can
+      # reproduce from source. Fail here instead.
+      - name: tag matches the version in pyproject
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(uv run --no-project --with tomli python -c \
+            'import tomli;print(tomli.load(open("pyproject.toml","rb"))["project"]["version"])')"
+          echo "tag=$tag pyproject=$pkg"
+          test "$tag" = "$pkg"
+
+      - run: uv build
+
+      - name: the wheel installs and both scripts run
+        env:
+          GRILL_HOME: ${{ runner.temp }}/grill-home
+        run: |
+          uv tool install dist/*.whl
+          grill --help
+          test "$(grill serve --json)" = '{"pending": null}'
+          echo '{}' | grill-hook
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  github-release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+
+  # Publishing is deliberately a separate, manually-approved job. Enable the
+  # `pypi` environment and configure Trusted Publishing on PyPI before the first
+  # tag; until then this job simply never gets approved and the tag still
+  # produces a GitHub release.
+  #
+  # Trusted Publishing (OIDC) rather than a long-lived API token: there is no
+  # secret to leak from a repository that has no other secrets.
+  pypi:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

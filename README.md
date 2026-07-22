@@ -1,5 +1,10 @@
 # grill
 
+[![CI](https://github.com/imkp1/grill/actions/workflows/ci.yml/badge.svg)](https://github.com/imkp1/grill/actions/workflows/ci.yml)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Status: alpha](https://img.shields.io/badge/status-alpha-orange)](#status)
+
 One question about your own code, when you finish coding.
 
 You can't tell the difference between understanding something and having watched it happen.
@@ -21,11 +26,16 @@ key — it shells out to the `claude` binary you already use.
 
 ```bash
 git clone https://github.com/imkp1/grill && cd grill
-uv sync
+uv tool install .
 ```
 
 This puts two commands on your PATH: `grill` (ask a question) and `grill-hook` (the
-capture trigger).
+capture trigger). `pipx install .` works the same way. Not on PyPI yet — install from a
+checkout.
+
+Installing as a tool rather than `uv sync` is deliberate: both surfaces below invoke
+`grill` by name, so it has to resolve without a path. Use `uv sync` only for working on
+grill itself.
 
 ### Wire up the hook
 
@@ -37,7 +47,7 @@ Capture runs when a session ends. Add to your Claude Code `settings.json`:
     "SessionEnd": [
       {
         "hooks": [
-          { "type": "command", "command": "/path/to/grill/.venv/bin/grill-hook" }
+          { "type": "command", "command": "grill-hook" }
         ]
       }
     ]
@@ -45,13 +55,16 @@ Capture runs when a session ends. Add to your Claude Code `settings.json`:
 }
 ```
 
+If you installed with `uv sync` instead, this has to be the absolute path to
+`.venv/bin/grill-hook` — and it breaks the moment you move the checkout.
+
 The hook reads the payload, spawns a detached worker, and returns immediately — it never
 blocks the end of your session, and it never speaks. Failures go to
 `~/.claude/grill/grill.log`, never to your terminal.
 
 ### Install the skill (optional)
 
-Copy `docs/skill/SKILL.md` into your skills directory as `grill/SKILL.md` to get `/grill`
+Copy `skill/SKILL.md` into your skills directory as `grill/SKILL.md` to get `/grill`
 inside Claude Code, using the native question UI. Without it, `grill` on the command line
 does the same job in the terminal.
 
@@ -137,7 +150,8 @@ print an estimated range and refuse to spend without `--go`.
 ## Development
 
 ```bash
-uv run pytest          # 216 tests, no network, no model calls, sub-second
+uv sync                # working on grill itself, rather than installing it
+uv run pytest          # 221 tests, no network, no model calls, sub-second
 uv run ruff check .
 uv run mypy
 ```
@@ -171,7 +185,20 @@ currently produce near-identical probes.
 
 Design notes and the reasoning behind each decision are in
 [`docs/design/grill-design.md`](docs/design/grill-design.md); [`IDEA.md`](IDEA.md) covers
-what this is and why it might not work.
+what this is and why it might not work. [`docs/README.md`](docs/README.md) says which of
+those documents are current and which are records.
+
+## Contributing
+
+Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the
+three rules that are easy to break by accident, and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+
+A question grill asked that was *bad* — wrong premise, wrong key, or testing nothing
+portable — is the single most useful thing you can report. There is an issue template
+for exactly that.
+
+For anything where grill leaked, over-collected, or wrote outside `GRILL_HOME`, see
+[SECURITY.md](SECURITY.md) and report it privately rather than in a public issue.
 
 ## License
 
