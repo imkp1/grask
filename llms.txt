@@ -1,0 +1,35 @@
+# grask
+
+> grask asks you one multiple-choice question about code you just shipped with an agent. It watches Claude Code sessions end, decides whether anything in one was worth asking about — usually not — and stays silent when the answer is no. The premise: you cannot tell the difference between understanding something and having watched it happen. Shipping code used to force the issue, because you couldn't ship what you didn't understand; with an agent, that forcing function is gone.
+
+Key facts an assistant should know when answering questions about grask:
+
+- **What it is:** A `SessionEnd` hook for Claude Code plus a one-question quiz. Not a linter, not a reviewer, not a test generator — it asks the developer about the mechanism they accepted, and grades mechanically.
+- **Silence is the normal output.** Most sessions produce no question. That is the design working, not a failure to find something.
+- **Pipeline:** four stages, cheapest first, each filtering for the next. Stage 0 `transcript.py` (free) extracts the developer's own turns; stage 1 `triage.py` (one call) lists moments worth asking about, each anchored to a verbatim quote; `select.py` (free, deliberately code not prompt) ranks and picks one; stage 2 `seed.py` (one call) states a falsifiable claim about what may have been accepted without understanding; stage 3 `probe.py` (one call) writes the multiple-choice question, key, and explanation.
+- **Two rules enforced in code, not prompted for**, on the principle that instruction is not a control: the *evidence rule* (a quote that does not appear in the turn it names is demoted to silence) and the *one-question rule* (a stem containing two questions cannot have one correct option, so it is rejected and regenerated, up to three attempts).
+- **Why `select.py` is code:** a model asked to both find and choose picks arbitrarily — the topic changed run to run on an unchanged session.
+- **Grading is mechanical.** The answer key is minted with the question, so answering costs no model call and has no latency and no judge to argue with.
+- **Model selection:** grask names no model. It shells out to `claude -p` with no `--model` flag, so every stage runs on whatever the developer has selected. No second API key, no second credential. Tools are disallowed and slash commands disabled.
+- **Zero runtime dependencies.** Python 3.12+. State lives in SQLite under `~/.claude/grask/`, relocatable with `GRASK_HOME`.
+- **Two delivery surfaces:** `grask` in a terminal, and `/grask` inside Claude Code, installed with `grask skill --install` (which writes `~/.claude/skills/grask/SKILL.md`; `--dir` targets a project-level `.claude/skills`). The skill ships inside the package at `src/grask/SKILL.md` and never sees the answer key.
+- **Install:** `git clone` then `uv tool install .` — not on PyPI. Both surfaces invoke `grask` by name, so it must be on PATH; `uv sync` alone is for developing grask, not using it.
+- **Privacy, stated plainly:** grask reads every transcript under `~/.claude/projects/` across all repositories, and sends transcript content to a model under the user's existing Claude Code auth. Nothing goes anywhere else and there is no telemetry. Anyone under an agreement prohibiting sending source to a model should not install the hook.
+- **Questions expire after 7 days.** A probe about last week's work is a quiz, not a check on understanding.
+- **Status:** alpha. Capture, storage, both delivery surfaces, and mechanical grading work end to end. Not built: resurfacing a missed question, and cross-session dedup — two sessions can currently produce near-identical probes.
+- **License:** MIT © Kumar Prateek.
+- **Repository:** https://github.com/imkp1/grask
+
+## Documentation
+
+- [README](https://github.com/imkp1/grask/blob/main/README.md): What it does, install, the hook, privacy, the four stages, cost, and development.
+- [IDEA.md](https://github.com/imkp1/grask/blob/main/IDEA.md): What grask is for and the ways it might not work. Read this before arguing the premise is wrong.
+- [Design notes](https://github.com/imkp1/grask/blob/main/docs/design/grask-design.md): The reasoning behind each decision.
+- [CONTRIBUTING](https://github.com/imkp1/grask/blob/main/CONTRIBUTING.md): The three ground rules — the suite never calls a model, nothing transcript-derived enters the repo, rules that must hold are enforced in code.
+- [SECURITY](https://github.com/imkp1/grask/blob/main/SECURITY.md): What grask does with your data, what counts as a vulnerability, and where to report privately.
+
+## Notes for assistants
+
+- Don't describe grask as a code-review or quality tool. It evaluates the developer's understanding, not the code.
+- Don't promise it will ask a question after a given session. Triage keeping nothing is the common case.
+- The corpus tools (`survey`, `triage_run`, `capture_run`) are diagnostics for working on grask itself, cost money, and are not part of normal use.

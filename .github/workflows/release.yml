@@ -1,0 +1,114 @@
+name: Release
+
+# Tag-driven. Nothing here runs on an ordinary push, so this workflow is inert
+# until someone deliberately tags a version.
+#
+# `workflow_dispatch` is a dry run of that same path: it builds the artifacts
+# and proves the wheel installs, but publishes nothing. It exists because every
+# other way of testing this file mints a real tag and a real GitHub release,
+# which cannot be taken back — so the release path had never been executed at
+# all. A dry run is not a rehearsal of publishing; the two `if:` guards below
+# are what keep it from becoming one.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+
+      # A tag that disagrees with pyproject produces a release nobody can
+      # reproduce from source. Fail here instead.
+      #
+      # Skipped on a dry run, where GITHUB_REF_NAME is the branch rather than a
+      # tag and the comparison would be meaningless rather than reassuring.
+      - name: tag matches the version in pyproject
+        if: github.event_name == 'push'
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(uv run --no-project --with tomli python -c \
+            'import tomli;print(tomli.load(open("pyproject.toml","rb"))["project"]["version"])')"
+          echo "tag=$tag pyproject=$pkg"
+          test "$tag" = "$pkg"
+
+      - run: uv build
+
+      - name: the wheel installs and both scripts run
+        env:
+          GRASK_HOME: ${{ runner.temp }}/grask-home
+        run: |
+          uv tool install dist/*.whl
+          grask --help
+          test "$(grask serve --json)" = '{"pending": null}'
+          echo '{}' | grask-hook
+          # The wheel is what a `pip install` produces, so this is the only
+          # place the shipped skill can be checked against a real release.
+          grask skill --install --dir "$(mktemp -d)/skills"
+
+      # upload-artifact v7 and download-artifact v8 are a matched pair despite
+      # the mismatched numbers — v8's content-type-aware download exists to read
+      # what v7's direct upload writes. Bump them together or not at all; the
+      # jobs below are the only consumers and nothing in CI exercises this file.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+  # Both publishing jobs are tag-only. A dry run stops after `build`, having
+  # produced the artifacts and thrown them away.
+  github-release:
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: dist/*
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+
+  # Publishing is a separate job so that it can be gated, but naming an
+  # environment here is not itself the gate. v0.1.0-rc1 proved that: `pypi` did
+  # not exist, GitHub created it on demand with no protection rules, and this
+  # job ran. It failed only because PyPI had no matching trusted publisher —
+  # absence of configuration on the far end, not a control on this end.
+  #
+  # The gate is the `pypi` environment's required-reviewer rule, which has to be
+  # added to the environment; this file cannot express it. Confirm it is present
+  # before configuring Trusted Publishing on PyPI, because the moment the far
+  # end is configured this job goes from failing to publishing. Note that
+  # protection rules need a public repository on the Free plan.
+  #
+  # Trusted Publishing (OIDC) rather than a long-lived API token: there is no
+  # secret to leak from a repository that has no other secrets.
+  pypi:
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      # Pinned to a commit, not `@release/v1`. This is the one step that runs
+      # third-party code while holding an OIDC token good for publishing grask,
+      # so a moving ref would let whoever controls that branch publish as us
+      # without any change landing here. This SHA is what v0.1.0-rc1 published
+      # with; bump it deliberately, after reading the diff.
+      - uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # v1.14.1

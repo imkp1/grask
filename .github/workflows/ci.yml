@@ -1,0 +1,83 @@
+name: CI
+
+# Every branch, not just main. Filtering to `main` meant a branch could be
+# merged on the strength of a local run, and the CI configuration itself was
+# the thing least likely to have been exercised before it landed.
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+# A pull request from a branch in this repo fires both triggers. Keep the
+# newest run per ref and cancel the rest.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      # --locked, not --frozen: uv.lock is committed, so a lockfile that has
+      # drifted from pyproject should fail here rather than resolve silently
+      # into something no contributor is running.
+      - run: uv sync --locked --all-extras --dev
+        env:
+          UV_PYTHON: ${{ matrix.python-version }}
+
+      - name: ruff
+        run: uv run ruff check .
+
+      - name: mypy
+        run: uv run mypy
+
+      # No network and no model calls: the `calibration` marker is deselected by
+      # default in pyproject, and everything else injects test doubles.
+      - name: pytest
+        run: uv run pytest -q
+
+  # The README's install is `uv tool install .`, and both delivery surfaces
+  # invoke `grask` by name. That contract broke once already without any test
+  # noticing, because the suite imports the package and never installs it.
+  packaging:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+
+      - name: install as a tool
+        run: uv tool install .
+
+      - name: console scripts exist and run
+        env:
+          GRASK_HOME: ${{ runner.temp }}/grask-home
+        run: |
+          grask --help
+          test "$(grask serve --json)" = '{"pending": null}'
+          # The hook takes its payload on stdin and must exit 0 on anything,
+          # including a payload it cannot use. It never has a --help to call.
+          echo '{}' | grask-hook
+
+      # SKILL.md is read out of the installed package, so this passes only if
+      # the build actually shipped it in the wheel. A checkout is not evidence:
+      # the file was present in the tree the whole time it was missing from the
+      # artifact everyone installs.
+      - name: the shipped skill survives packaging
+        run: |
+          cd "$(mktemp -d)"
+          grask skill --install --dir ./skills
+          test -f ./skills/grask/SKILL.md
+          head -2 ./skills/grask/SKILL.md | grep -q '^name: grask$'
