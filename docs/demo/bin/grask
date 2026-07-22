@@ -1,0 +1,19 @@
+#!/bin/sh
+# Runs the working tree, not whatever version is installed globally, so the
+# recorded GIF always shows the code in this repo.
+#
+# Resolves the interpreter explicitly: the demo runs on a deliberately minimal
+# PATH, where `python3` is macOS's 3.9 and cannot parse this codebase's 3.12
+# generics.
+repo=$(cd "$(dirname "$0")/../../.." && pwd)
+
+if [ -x "$repo/.venv/bin/python" ]; then
+    py="$repo/.venv/bin/python"
+elif command -v uv >/dev/null 2>&1; then
+    exec uv run --project "$repo" grask "$@"
+else
+    echo "no usable interpreter: create $repo/.venv or install uv" >&2
+    exit 1
+fi
+
+exec env PYTHONPATH="$repo/src" "$py" -m grask.cli "$@"
