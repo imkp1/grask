@@ -31,7 +31,7 @@ grill = "grill.cli:main"
 grill-hook = "grill.hook:main"
 
 [build-system]
-requires = ["uv_build>=0.11.27,<0.12.0"]
+requires = ["uv_build>=0.11.31,<0.12.0"]
 build-backend = "uv_build"
 
 # `SKILL.md` lives inside the package rather than at the repo root, and
