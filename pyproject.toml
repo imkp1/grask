@@ -34,6 +34,13 @@ grill-hook = "grill.hook:main"
 requires = ["uv_build>=0.11.27,<0.12.0"]
 build-backend = "uv_build"
 
+[tool.uv.build-backend]
+# The README tells the user to copy `skill/SKILL.md` into their skills
+# directory to get `/grill`. Without this the file is absent from the sdist,
+# so that instruction works from a git checkout and silently fails for anyone
+# who ever installs from a published source distribution.
+source-include = ["skill/SKILL.md"]
+
 [tool.pytest.ini_options]
 # Calibration tests call the real model: they cost money and are not
 # deterministic. Deselected by default so the ordinary suite stays free and
