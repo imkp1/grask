@@ -40,7 +40,7 @@ jobs:
           # place the shipped skill can be checked against a real release.
           grill skill --install --dir "$(mktemp -d)/skills"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
