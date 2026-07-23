@@ -81,3 +81,18 @@ jobs:
           grask skill --install --dir ./skills
           test -f ./skills/grask/SKILL.md
           head -2 ./skills/grask/SKILL.md | grep -q '^name: grask$'
+
+  # The repo is also a Claude Code plugin. `plugin validate` is offline — it
+  # checks the manifest, marketplace, hooks, and skill frontmatter against the
+  # schema without contacting Anthropic. The SKILL.md mirror and JSON validity
+  # are pinned in tests/test_plugin.py too; this is the fuller schema check.
+  plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install -g @anthropic-ai/claude-code
+      - name: validate the plugin and marketplace manifests
+        run: claude plugin validate .

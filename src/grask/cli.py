@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
+import sys
 from importlib import resources
 from pathlib import Path
 
@@ -35,6 +36,7 @@ from grask.ask import (
 from grask.ask import (
     ask as _ask,
 )
+from grask.install import doctor, hook_configured, install, uninstall
 from grask.storage import Store
 
 NOTHING_PENDING = "nothing to ask about."
@@ -178,6 +180,7 @@ def main(
     store_factory=Store,
     ask=_ask,
     console: Console | None = None,
+    check_hook=hook_configured,
 ) -> int:
     """Take one pending probe, interrogate, record. Returns a shell exit code."""
     parser = argparse.ArgumentParser(
@@ -222,6 +225,16 @@ def main(
         "--dir", type=Path, help=f"skills directory (default: {DEFAULT_SKILLS_DIR})"
     )
 
+    sub.add_parser(
+        "install", help="wire the /grask skill and the SessionEnd capture hook into ~/.claude"
+    )
+    sub.add_parser(
+        "uninstall", help="remove grask's skill and capture hook (your data is left alone)"
+    )
+    sub.add_parser(
+        "doctor", help="check grask's configuration and the environment it needs"
+    )
+
     args = parser.parse_args(argv)
 
     if args.command == "skill":
@@ -230,6 +243,21 @@ def main(
         return _serve(store_factory)
     if args.command == "record":
         return _record(args, record_parser, store_factory)
+    if args.command == "install":
+        return install()
+    if args.command == "uninstall":
+        return uninstall()
+    if args.command == "doctor":
+        return doctor()
+
+    # Bare `grask` with capture unwired: the package is installed but nothing is
+    # feeding it. Say so once, on stderr so it never corrupts the answer flow, and
+    # carry on — there may still be a probe from a manual capture to serve.
+    if not check_hook():
+        print(
+            "grask captures nothing until it's wired up — run `grask install`.",
+            file=sys.stderr,
+        )
 
     with store_factory() as store:
         pending = store.next_probe()

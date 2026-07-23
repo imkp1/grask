@@ -1,0 +1,9 @@
+{
+  "name": "grask",
+  "description": "One question about your own code, when you finish coding.",
+  "version": "0.1.0-rc1",
+  "author": { "name": "Kumar Prateek" },
+  "homepage": "https://github.com/imkp1/grask",
+  "repository": "https://github.com/imkp1/grask",
+  "license": "MIT"
+}

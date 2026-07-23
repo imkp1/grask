@@ -49,54 +49,49 @@ call and no judge to argue with.
 
 ## Install
 
-Requires Python 3.12+ and the [Claude Code CLI](https://claude.com/claude-code) already
-installed and authenticated. grask has no runtime dependencies and needs no second API
-key — it shells out to the `claude` binary you already use.
+Both paths need the [Claude Code CLI](https://claude.com/claude-code) already installed and
+authenticated. grask has no runtime dependencies and needs no second API key — it shells
+out to the `claude` binary you already use. They are two ways in, not two products: each
+wires the same `SessionEnd` capture hook and the same `/grask` skill.
+
+### As a plugin (recommended)
+
+Needs [`uv`](https://docs.astral.sh/uv/) on your PATH. Inside Claude Code:
+
+```
+/plugin marketplace add imkp1/grask
+/plugin install grask
+```
+
+That is the whole setup — no `settings.json` editing, no separate `pip` install. The plugin
+carries grask's source and runs it through `uv`, which provisions Python 3.12 on first use
+(grask has no other dependencies). A `SessionStart` step pre-warms that environment so the
+end of your session is never delayed. The skill is namespaced by the runtime, so you type
+`/grask:grask`.
+
+### Standalone
+
+For the bare `grask` command line, or if you'd rather not run a plugin:
 
 ```bash
 uv tool install grask --prerelease=allow
+grask install
 ```
 
 Only pre-release versions are published so far, hence the flag — plain
 `uv tool install grask` will find nothing. `pipx install --pip-args=--pre grask` works the
-same way, as does `uv tool install .` from a clone.
+same way, as does `uv tool install .` from a clone. Install as a *tool*, not with `uv sync`:
+both surfaces invoke grask by name, so it has to resolve without a path.
 
-This puts two commands on your PATH: `grask` (ask a question) and `grask-hook` (the capture
-trigger). Install as a *tool*, not with `uv sync`: both surfaces below invoke grask by name,
-so it has to resolve without a path, and `uv sync` is for working on grask itself.
+`grask install` writes the `/grask` skill and merges the `SessionEnd` hook into your
+`~/.claude/settings.json` — idempotently, and leaving anything else in that file alone.
+`grask uninstall` reverses both (your captured data is left in place), and `grask doctor`
+checks the wiring and the environment it needs.
 
-### Wire up the hook
-
-Capture runs when a session ends. Add to your Claude Code `settings.json`:
-
-```json
-{
-  "hooks": {
-    "SessionEnd": [
-      {
-        "hooks": [
-          { "type": "command", "command": "grask-hook" }
-        ]
-      }
-    ]
-  }
-}
-```
-
-The hook reads the payload, spawns a detached worker, and returns immediately — it never
-blocks the end of your session, and it never speaks. Failures go to
-`~/.claude/grask/grask.log`, never to your terminal.
-
-### Install the skill (optional)
-
-```bash
-grask skill --install          # writes ~/.claude/skills/grask/SKILL.md
-```
-
-This gets you `/grask` inside Claude Code, using the native question UI. Without it, `grask`
-on the command line does the same job. `--dir` targets a different skills directory
-(`.claude/skills` next to a repo, for a project-level install), and `grask skill` with no
-flags prints the file instead of writing it.
+The capture hook spawns a detached worker and returns immediately — it never blocks the end
+of your session, and it never speaks. Failures go to `~/.claude/grask/grask.log`, never to
+your terminal. If capture ever seems off, `grask doctor` is the one place that will tell you
+why.
 
 ## Use
 

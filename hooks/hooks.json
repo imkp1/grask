@@ -1,0 +1,24 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --no-dev --project \"${CLAUDE_PLUGIN_ROOT}\" python -c \"\""
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --no-dev --project \"${CLAUDE_PLUGIN_ROOT}\" grask-hook"
+          }
+        ]
+      }
+    ]
+  }
+}

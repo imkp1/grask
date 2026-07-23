@@ -1,0 +1,12 @@
+{
+  "name": "grask",
+  "description": "One question about your own code, when you finish coding.",
+  "owner": { "name": "Kumar Prateek" },
+  "plugins": [
+    {
+      "name": "grask",
+      "source": "./",
+      "description": "One question about your own code, when you finish coding."
+    }
+  ]
+}
