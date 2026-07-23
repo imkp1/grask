@@ -144,3 +144,30 @@ def test_the_skill_prints_without_installing(tmp_path: Path, capsys):
     assert code == 0
     assert "name: grask" in capsys.readouterr().out
     assert list(tmp_path.iterdir()) == []
+
+
+def test_shim_writes_the_runner_shim(tmp_path: Path, capsys):
+    """SessionStart runs this; it must leave an executable shim in grask's home
+    (GRASK_HOME, redirected to tmp_path by conftest) that re-enters grask through
+    the given plugin root."""
+    code = main(["shim", "--root", str(tmp_path / "plugin-root")])
+    capsys.readouterr()
+
+    shim = tmp_path / "grask"
+    assert code == 0
+    assert shim.is_file()
+    assert str(tmp_path / "plugin-root") in shim.read_text(encoding="utf-8")
+
+
+def test_shim_never_fails_a_session_open(tmp_path: Path, capsys, monkeypatch):
+    """A shim it cannot write is a warning, not a non-zero exit — SessionStart
+    returning non-zero would surface an error on a surface the developer did not
+    ask about."""
+    def boom(root):
+        raise OSError("read-only home")
+
+    monkeypatch.setattr("grask.cli.write_runner_shim", boom)
+    code = main(["shim", "--root", str(tmp_path / "plugin-root")])
+
+    assert code == 0
+    assert "could not write runner shim" in capsys.readouterr().err

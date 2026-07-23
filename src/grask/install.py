@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 from importlib import resources
 from pathlib import Path
 from typing import Any
@@ -25,9 +26,13 @@ from typing import Any
 from grask.storage import grask_home
 
 # The command the standalone hook registers. The plugin path uses a different
-# command (uv run … grask-hook) written into the plugin's own hooks.json; this
-# one is for the settings.json that `grask install` maintains.
+# command (env PYTHONPATH=…/src python3 -m grask.hook) written into the plugin's
+# own hooks.json; this one is for the settings.json that `grask install` maintains.
 HOOK_COMMAND = "grask-hook"
+
+# Grask needs a Python this new; `grask doctor` gates on it. Kept as a constant so
+# the shim, the docs, and the check cannot drift to three different numbers.
+MIN_PYTHON = (3, 12)
 
 # Claude Code's user-level config. Both are under ~/.claude; kept as functions so
 # tests point them at a tmp dir and never touch the developer's real setup.
@@ -133,6 +138,30 @@ def _write_skill(target_dir: Path) -> Path:
     return target
 
 
+def runner_shim_text(root: str) -> str:
+    """The tiny sh shim the `/grask` skill calls so it never assumes a `grask` is
+    on PATH. It runs grask exactly as the SessionEnd hook does: plain `python3`
+    with the plugin's `src/` on `PYTHONPATH`. grask has no third-party
+    dependencies and reaches the model by running the `claude` binary, so it needs
+    no virtualenv — only a Python `grask doctor` vouches for. `${CLAUDE_PLUGIN_ROOT}`
+    is substituted only inside `hooks/hooks.json`, never in a skill's shell, so the
+    root has to be baked in here at SessionStart rather than read back later."""
+    return f'#!/bin/sh\nexec env PYTHONPATH="{root}/src" python3 -m grask.cli "$@"\n'
+
+
+def write_runner_shim(root: str, home: Path | None = None) -> Path:
+    """Write, and mark executable, the runner shim under grask's home. Refreshed
+    every SessionStart because the plugin root carries a version in its path and
+    moves on upgrade — a shim written once would soon point at a directory the
+    upgrade deleted."""
+    home = home or grask_home()
+    home.mkdir(parents=True, exist_ok=True)
+    shim = home / "grask"
+    shim.write_text(runner_shim_text(root), encoding="utf-8")
+    shim.chmod(0o755)
+    return shim
+
+
 def install(skills: Path | None = None, settings: Path | None = None) -> int:
     """Write the skill and merge the hook. Prints what it did; validates that both
     grask-owned surfaces are in place before claiming success."""
@@ -186,24 +215,81 @@ def uninstall(skills: Path | None = None, settings: Path | None = None) -> int:
     return 0
 
 
+def _python_version(python3: str) -> tuple[int, int, int] | None:
+    """The (major, minor, micro) of a `python3` binary, or None if it cannot be
+    determined. Probed by running it rather than by parsing its name, because
+    `python3` is a symlink that says nothing about the version behind it."""
+    try:
+        out = subprocess.run(
+            [python3, "-c", "import sys;print('%d %d %d' % sys.version_info[:3])"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        ).stdout.split()
+        return (int(out[0]), int(out[1]), int(out[2]))
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+        return None
+
+
+def _python_check() -> tuple[bool, str]:
+    """Is there a `python3` on PATH new enough to run grask? This is the one
+    environmental thing the plugin needs — no venv, no uv, just an interpreter."""
+    python3 = shutil.which("python3")
+    if python3 is None:
+        return False, "not found — the plugin runs grask with `python3`"
+    version = _python_version(python3)
+    if version is None:
+        return False, f"{python3} — could not determine its version"
+    got = ".".join(str(n) for n in version)
+    need = ".".join(str(n) for n in MIN_PYTHON)
+    if version[:2] < MIN_PYTHON:
+        return False, f"{python3} is Python {got} — grask needs ≥ {need}"
+    return True, f"{python3} (Python {got})"
+
+
 def _checks(skills: Path, settings: Path) -> list[tuple[str, bool, str]]:
     """The diagnostics, as (label, ok, detail) triples. Kept as data rather than
-    prose so a future `grask doctor --json` is a rendering change, not a rewrite."""
+    prose so a future `grask doctor --json` is a rendering change, not a rewrite.
+
+    Two ways to be wired, checked together: the standalone install (skill under
+    `~/.claude/skills`, `grask-hook` in `settings.json`) and the plugin. The
+    runner shim is the plugin's fingerprint — SessionStart writes it, so its
+    presence means the plugin's hooks (and its bundled skill) are the ones live —
+    and it stands in for both surfaces so a healthy plugin install does not read
+    as two failures."""
     skill_file = skills / "grask" / "SKILL.md"
     try:
         wired = _command_present(_session_end_groups(_load_settings(settings)), HOOK_COMMAND)
     except (ValueError, json.JSONDecodeError):
         wired = False
 
-    uv = shutil.which("uv")
+    shim = grask_home() / "grask"
+    via_plugin = shim.is_file()
+
+    if skill_file.is_file():
+        skill_ok, skill_detail = True, str(skill_file)
+    elif via_plugin:
+        skill_ok, skill_detail = True, f"provided by the plugin ({shim})"
+    else:
+        skill_ok, skill_detail = False, str(skill_file)
+
+    if wired:
+        hook_ok, hook_detail = True, f"SessionEnd `{HOOK_COMMAND}` in {settings}"
+    elif via_plugin:
+        hook_ok, hook_detail = True, "provided by the plugin's SessionEnd hook"
+    else:
+        hook_ok, hook_detail = False, f"SessionEnd `{HOOK_COMMAND}` in {settings}"
+
     claude = shutil.which("claude")
     no_claude = "not found — grask has no model access without it"
-    no_uv = "not found — the plugin runtime needs it"
+    py_ok, py_detail = _python_check()
+    need = ".".join(str(n) for n in MIN_PYTHON)
     return [
         ("claude on PATH", claude is not None, claude or no_claude),
-        ("uv on PATH", uv is not None, uv or no_uv),
-        ("skill installed", skill_file.is_file(), str(skill_file)),
-        ("capture hook wired", wired, f"SessionEnd `{HOOK_COMMAND}` in {settings}"),
+        (f"python3 ≥ {need}", py_ok, py_detail),
+        ("delivery skill present", skill_ok, skill_detail),
+        ("capture hook wired", hook_ok, hook_detail),
     ]
 
 

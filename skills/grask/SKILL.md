@@ -18,17 +18,31 @@ relay the answer. You never grade, never guess, and never see the answer key.
   `grask record`.
 - One native question, one round. No confidence round, no follow-ups.
 
+## Running grask
+
+Do not assume a bare `grask` is on PATH — the plugin install deliberately does
+not put one there. Every `grask` call below goes through this resolver, which
+prefers the shim the plugin's SessionStart hook writes and falls back to a
+PATH `grask` for the standalone install:
+
+```
+GRASK="${GRASK_HOME:-$HOME/.claude/grask}/grask"; [ -x "$GRASK" ] || GRASK=grask
+```
+
+Prepend that to each command, so every call is self-contained (a new shell each
+time). Where a step below writes `grask …`, run `"$GRASK" …`.
+
 ## Flow
 
 1. Run:
 
    ```
-   grask serve --json
+   GRASK="${GRASK_HOME:-$HOME/.claude/grask}/grask"; [ -x "$GRASK" ] || GRASK=grask; "$GRASK" serve --json
    ```
 
    If the output is `{"pending": null}`, say there is nothing pending and stop.
-   If the command is not found, grask is not installed on this PATH — say so and
-   stop rather than hunting for a checkout to `cd` into.
+   If `grask` cannot be found or run either way, grask is not installed here —
+   say so and stop rather than hunting for a checkout to `cd` into.
 
 2. Ask ONE native question, preview-style (like plan-mode option picks), built
    entirely from the served JSON:
@@ -51,10 +65,10 @@ relay the answer. You never grade, never guess, and never see the answer key.
      note: "Other" accepts `skip`, or `wrong: <what's off>` if the question
      misreads what happened.
 
-3. Record the result:
-   - Picked letter L: `grask record <probe_id> --pick L`
-   - Skipped: `grask record <probe_id> --skip`
-   - Premise rejected: `grask record <probe_id> --wrong --objection
+3. Record the result (through the same `$GRASK` resolver as step 1):
+   - Picked letter L: `"$GRASK" record <probe_id> --pick L`
+   - Skipped: `"$GRASK" record <probe_id> --skip`
+   - Premise rejected: `"$GRASK" record <probe_id> --wrong --objection
      "<their words>"` (omit `--objection` if they gave no reason).
 
    Show the result: ✓ or ✗ from `outcome`, then the `explanation` verbatim,

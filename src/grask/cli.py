@@ -36,7 +36,13 @@ from grask.ask import (
 from grask.ask import (
     ask as _ask,
 )
-from grask.install import doctor, hook_configured, install, uninstall
+from grask.install import (
+    doctor,
+    hook_configured,
+    install,
+    uninstall,
+    write_runner_shim,
+)
 from grask.storage import Store
 
 NOTHING_PENDING = "nothing to ask about."
@@ -117,6 +123,23 @@ def _serve(store_factory) -> int:
                 )
             )
             return 0
+
+
+def _shim(args: argparse.Namespace) -> int:
+    """SessionStart's one job: write the runner shim so the `/grask` skill can
+    reach *this* plugin's grask without a `grask` on PATH. The skill has no
+    `${CLAUDE_PLUGIN_ROOT}` of its own, so the hook — which does — bakes the root
+    into the shim here, every session, since the root moves on upgrade.
+
+    It must never fail a session open, so a shim it could not write is a warning
+    on stderr, not a non-zero exit."""
+    try:
+        shim = write_runner_shim(args.root)
+    except OSError as exc:
+        print(f"shim: could not write runner shim: {exc}", file=sys.stderr)
+        return 0
+    print(f"shim: wrote runner shim at {shim}")
+    return 0
 
 
 def _fail(message: str) -> int:
@@ -234,6 +257,13 @@ def main(
     sub.add_parser(
         "doctor", help="check grask's configuration and the environment it needs"
     )
+    shim_parser = sub.add_parser(
+        "shim",
+        help="write the /grask runner shim for this plugin root (SessionStart)",
+    )
+    shim_parser.add_argument(
+        "--root", required=True, help="the plugin root to run grask from"
+    )
 
     args = parser.parse_args(argv)
 
@@ -249,6 +279,8 @@ def main(
         return uninstall()
     if args.command == "doctor":
         return doctor()
+    if args.command == "shim":
+        return _shim(args)
 
     # Bare `grask` with capture unwired: the package is installed but nothing is
     # feeding it. Say so once, on stderr so it never corrupts the answer flow, and

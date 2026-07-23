@@ -153,17 +153,33 @@ located and run.
 
 **Plugin (recommended).** The repository is also a Claude Code plugin — `.claude-plugin/`
 holds the plugin and marketplace manifests, `hooks/hooks.json` the hooks, `skills/grask/` the
-skill. `/plugin install grask` registers everything in one step, no `settings.json` editing
-and no separate `pip`. The `SessionEnd` hook runs `uv run --project "${CLAUDE_PLUGIN_ROOT}"
-grask-hook`: the plugin carries grask's source, and `uv` provisions Python 3.12 on first use
-(grask has no other dependencies). The plugin owns its code and its runtime as one unit, which
-is why it invokes `uv run` rather than assuming a separately-installed `grask` on PATH.
+skill. `/plugin install grask` registers everything in one step, no `settings.json` editing and
+no separate `pip`. The `SessionEnd` hook runs `env PYTHONPATH="${CLAUDE_PLUGIN_ROOT}/src"
+python3 -m grask.hook`: the plugin carries grask's source under `src/`, and grask runs on plain
+`python3`. That is the whole runtime — no `uv`, no virtualenv, no build step. It is affordable
+because grask has **no third-party dependencies** and reaches the model by running the `claude`
+binary, not through an SDK; the one thing it needs from the environment is a Python new enough
+(`≥ 3.12`), which `grask doctor` gates on. The plugin owns its code and runs it directly, rather
+than assuming a separately-installed `grask` on PATH.
 
-*Pre-warm is an invariant, not an optimization.* A `SessionStart` hook builds the `uv`
-environment once, on session open, so `SessionEnd` never blocks the developer's exit on a cold
-`uv` resolution — the same non-blocking promise the detached worker already makes. It exists to
-satisfy *no user-visible latency at `SessionEnd`*, and a contributor who understands that will
-not remove it.
+*Why not `uv`?* An earlier design wrapped every hook in `uv run --project`, which pinned Python
+3.12 but dragged a virtualenv, a build, and a `SessionStart` pre-warm invented solely to hide the
+cold-resolution latency at session exit. For a zero-dependency package that shells out to
+`claude`, that machinery paid for a runtime grask does not have. Dropping it removed the venv,
+the pre-warm, and `uv` from the check surface — replaced by one honest `python3 ≥ 3.12` gate in
+`doctor`. Provisioning the interpreter is now the user's job (or their package manager's), which
+is the same deal every other Python tool offers.
+
+*The runner shim carries the plugin root to the skill.* A `SessionStart` hook runs
+`grask shim --root "${CLAUDE_PLUGIN_ROOT}"`, which writes an executable shim to
+`${GRASK_HOME}/grask` that re-enters grask exactly as the SessionEnd hook does —
+`env PYTHONPATH="<root>/src" python3 -m grask.cli`. The `/grask` skill has to call grask too, but
+`${CLAUDE_PLUGIN_ROOT}` is substituted only inside `hooks/hooks.json`, never in a skill's shell,
+and the plugin puts no `grask` on PATH — so without this bridge the skill has no way to reach the
+plugin's grask. The skill prefers the shim and falls back to a PATH `grask` for the standalone
+install. The shim is rewritten every session because the plugin root carries a version and moves
+on upgrade — and its presence is also how `doctor` recognises a plugin install and counts the
+skill and capture hook as provided.
 
 **Standalone (`grask install`).** For the bare `grask` command line, or for anyone who would
 rather not run a plugin: `uv tool install grask`, then `grask install`. It writes the skill and

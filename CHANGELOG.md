@@ -6,6 +6,23 @@ SQLite schema under `GRASK_HOME` carries no migration guarantee yet.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/) once there is a 1.0 to be compatible with.
 
+## Unreleased
+
+- **Plugin runtime no longer uses `uv`.** The plugin now runs grask with plain
+  `env PYTHONPATH="${CLAUDE_PLUGIN_ROOT}/src" python3 -m grask.…` — no virtualenv, no build,
+  no `uv`. grask has no third-party dependencies and reaches the model through the `claude`
+  binary, so the venv machinery (and the `SessionStart` pre-warm that only existed to hide its
+  cold-start latency) paid for a runtime grask does not have. The one requirement is now a
+  `python3 ≥ 3.12`, which `grask doctor` gates on in place of the old `uv on PATH` check.
+  Standalone (`uv tool install grask`) is unchanged.
+- **Fix: `/grask` under a plugin-only install.** The skill called a bare `grask`, which the
+  plugin deliberately does not put on PATH — so `/grask` failed for anyone who installed the
+  plugin without also `uv tool install grask`. `SessionStart` now writes an executable runner
+  shim (`grask shim --root`) that the skill invokes; the skill falls back to a PATH `grask` for
+  the standalone install.
+- **`grask doctor` understands the plugin.** The runner shim is the plugin's fingerprint, so a
+  plugin-only install no longer reports its skill and capture hook as missing.
+
 ## 0.1.0-rc1
 
 First public version. Everything below is new, so this entry describes what exists rather

@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --no-dev --project \"${CLAUDE_PLUGIN_ROOT}\" python -c \"\""
+            "command": "env PYTHONPATH=\"${CLAUDE_PLUGIN_ROOT}/src\" python3 -m grask.cli shim --root \"${CLAUDE_PLUGIN_ROOT}\""
           }
         ]
       }
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --no-dev --project \"${CLAUDE_PLUGIN_ROOT}\" grask-hook"
+            "command": "env PYTHONPATH=\"${CLAUDE_PLUGIN_ROOT}/src\" python3 -m grask.hook"
           }
         ]
       }

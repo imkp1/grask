@@ -56,18 +56,19 @@ wires the same `SessionEnd` capture hook and the same `/grask` skill.
 
 ### As a plugin (recommended)
 
-Needs [`uv`](https://docs.astral.sh/uv/) on your PATH. Inside Claude Code:
+Needs a `python3` (≥ 3.12) on your PATH. Inside Claude Code:
 
 ```
 /plugin marketplace add imkp1/grask
 /plugin install grask
 ```
 
-That is the whole setup — no `settings.json` editing, no separate `pip` install. The plugin
-carries grask's source and runs it through `uv`, which provisions Python 3.12 on first use
-(grask has no other dependencies). A `SessionStart` step pre-warms that environment so the
-end of your session is never delayed. The skill is namespaced by the runtime, so you type
-`/grask:grask`.
+That is the whole setup — no `settings.json` editing, no separate `pip` install, no `uv`.
+The plugin carries grask's source under `src/` and runs it with plain `python3`; grask has no
+third-party dependencies, so there is no virtualenv and no build step. A `SessionStart` step
+writes a small shim so the `/grask` skill can find the plugin's copy of grask. If your `python3`
+is older than 3.12, `grask doctor` will say so. The skill is namespaced by the runtime, so you
+type `/grask:grask`.
 
 ### Standalone
 

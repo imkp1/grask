@@ -42,14 +42,17 @@ def test_marketplace_lists_the_plugin_at_repo_root():
 
 def test_hooks_register_capture_on_session_end():
     hooks = json.loads((REPO / "hooks" / "hooks.json").read_text("utf-8"))["hooks"]
-    commands = [
-        h["command"]
-        for event in ("SessionStart", "SessionEnd")
-        for group in hooks.get(event, [])
-        for h in group["hooks"]
-    ]
-    # SessionEnd runs capture; SessionStart pre-warms so SessionEnd never blocks
-    # session exit on a cold uv resolution.
-    assert any("grask-hook" in c for c in commands)
-    assert any("CLAUDE_PLUGIN_ROOT" in c for c in commands)
-    assert hooks.get("SessionStart"), "the pre-warm invariant must not be dropped"
+    end = [h["command"] for group in hooks.get("SessionEnd", []) for h in group["hooks"]]
+    start = [h["command"] for group in hooks.get("SessionStart", []) for h in group["hooks"]]
+
+    # SessionEnd runs capture via plain python3 against the plugin's src — no uv,
+    # no venv — and reaches it through the plugin root only it can see.
+    assert any("grask.hook" in c and "CLAUDE_PLUGIN_ROOT" in c for c in end)
+
+    # SessionStart writes the runner shim the /grask skill calls, passing it the
+    # plugin root — the skill has no CLAUDE_PLUGIN_ROOT of its own.
+    assert start, "the shim-writing SessionStart hook must not be dropped"
+    assert any("grask.cli shim" in c and "--root" in c for c in start)
+
+    # The whole point of this layer: nothing here depends on uv any more.
+    assert not any("uv " in c or "uv\t" in c for c in end + start)
