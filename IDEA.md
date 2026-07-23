@@ -212,6 +212,13 @@ None of which touches day one. Wanting this still takes being willing to be wron
 of a computer, repeatedly, on purpose. Nobody has built a successful product around
 voluntarily feeling stupid.
 
+**And it only reaches people already in this editor.** grask lives in Claude Code and nowhere
+else. I think that's right rather than limiting — the hollow-pattern problem is *worst*
+exactly where the agent wrote the code, so that's where the tool belongs — but it caps who
+this can ever help to people already working this way, and I'd rather call that a deliberate
+choice than pretend it's universal. If the evidence ever says otherwise, that's the thing to
+revisit.
+
 ## Where it's at
 
 Alpha, and it works: sessions get read, most produce nothing, the ones that don't produce a

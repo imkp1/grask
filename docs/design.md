@@ -5,12 +5,9 @@ the code and this disagree, one of them is a bug.
 
 ## Premise
 
-You cannot tell the difference between understanding something and having watched it
-happen. Reading about idempotent retries and nodding along feels identical, from the
-inside, to knowing it. Watching an agent apply a pattern across three PRs feels like
-learning it.
-
-grask finds out which one it was, by asking a question you can't bluff.
+From the inside, understanding something and having watched it happen are
+indistinguishable — reading about idempotent retries and nodding along feels identical to
+knowing it. grask finds out which one it was, by asking a question you can't bluff.
 
 ## Goals
 
@@ -55,15 +52,11 @@ are no streaks (they buy a habit the trigger already gives), why the cap is one 
 nothing behind it spends the 20 seconds and returns nothing). When a proposed feature raises
 either half, that is the reason to reject it.
 
-Many sessions produce no question at all. See "Silence is a valid outcome".
-
 **Capture and delivery are split: push to capture, pull to deliver.** The design once fired
 the question at session end. It does not: the hook runs detached, the developer has already
 walked away, and a prompt written into a closing terminal is a prompt nobody reads. Capture
 happens when the evidence is freshest; the question waits, for at most seven days, until the
-developer asks for it. So the half the developer would have to remember — noticing a session
-was interesting — is automatic, and the half they choose is one command with a question
-already waiting behind it. The split is also what makes the question cost nothing at the
+developer asks for it. The split is also what makes the question cost nothing at the
 moment it is generated: nobody is sitting there while three model calls run.
 
 The original pull-based portal is a rejected design; see "Pull-based portal". The dismissal
@@ -130,29 +123,25 @@ One SQLite file at `~/.claude/grask/grask.db` (`GRASK_HOME` relocates it). Five 
 | `asks` | one row per probe answered, `UNIQUE(probe_id)` |
 | `answers` | the option text the developer picked |
 
-**Silence and failure are recorded, not just keeps.** Keep-rate and failure-rate are the two
-numbers that say whether any of this works, and a table you have to remember to populate is
-a table that lies. It is also what makes capture idempotent: a `session_id` already present
-means we have seen it, whatever we concluded.
-
-`UNIQUE(probe_id)` on `asks` makes an answer permanent. That is why Ctrl-C records nothing
-rather than recording a skip — a stray keypress must not consume the question.
+**Silence and failure are recorded, not just keeps** — the keep- and failure-rates are the
+signal that says whether any of this works, and recording every session is also what makes
+capture idempotent: a `session_id` already present means we have seen it. `UNIQUE(probe_id)`
+on `asks` makes an answer permanent, which is why Ctrl-C records nothing rather than a skip —
+a stray keypress must not consume the question.
 
 ### Entry points
 
-1. **`grask`** — ask the next pending question in the terminal. The product.
-2. **`grask serve --json` / `grask record <id>`** — the machine-readable pair behind
-   `/grask`. Also the test harness for delivery.
-3. **`grask skill [--install] [--dir]`** — write the `/grask` skill into a skills directory.
-4. **`grask-hook`** — the `SessionEnd` capture trigger. Registered in the user's
-   `settings.json`; never invoked by hand.
+| Command | Purpose |
+|---|---|
+| `grask` | Ask the next pending question in the terminal. The product. |
+| `grask serve --json` / `grask record <id>` | Machine-readable pair behind `/grask`; also the delivery test harness. |
+| `grask skill [--install] [--dir]` | Write the `/grask` skill into a skills directory. |
+| `grask-hook` | The `SessionEnd` capture trigger. Registered in `settings.json`; never invoked by hand. |
 
-There is no `grask <topic>` entry point. An earlier build order had one as a way to exercise
-the questioning core without a capture pipeline attached; it was never built, because a
-hand-typed topic is the one path where the fatal failure — misreading code the developer
-actually wrote — cannot occur, so a probe validated that way would measure a quality that
-does not transfer. The corpus runner (`grask.capture_run`) replaced it: it exercises the
-same core against real transcripts.
+There is no `grask <topic>` entry point: a hand-typed topic is the one path where the fatal
+failure — misreading code the developer actually wrote — cannot occur, so a probe validated
+that way would measure a quality that does not transfer. The corpus runner
+(`grask.capture_run`) exercises the same core against real transcripts instead.
 
 ## The questioning engine
 
@@ -167,10 +156,11 @@ teach them, and no downstream quality recovers that.
 So the bar is not "a relevant question." It is a question that makes an experienced
 engineer stop for thirty seconds and go *"…huh"* — every session, from their own code.
 Whether an LLM clears that bar reliably is the bet this project is making. It is measured,
-not argued: see "North-star metric".
+not argued: see "Evaluating question quality".
 
-This and developer motivation are the two risks that outrank everything below; see "Open
-questions" for the second and for how they rank against each other.
+This and developer motivation are the two risks that outrank everything below. Developer
+motivation — whether anyone answers at all — is a product risk, not an implementation one,
+and lives in `IDEA.md`.
 
 **The question must teach something portable.** A question whose answer is "because this
 file says so" — the contents of a local script, the wording of a local spec, what one step
@@ -266,8 +256,8 @@ copied this without understanding idempotency" stated to a developer's face is p
 confident accusation this design refuses to make. The system asks; it does not accuse. The
 hypothesis drives the question, is stored, and never becomes the greeting.
 
-It is also the riskiest object here, because it is the hallucinated premise from "Known
-ceiling" given a name. Naming it does not reduce that risk — it makes it inspectable.
+It is also the riskiest object here, because it is the hallucinated premise from
+"Limitations" given a name. Naming it does not reduce that risk — it makes it inspectable.
 
 ### Loop
 
@@ -419,26 +409,6 @@ key. A string like `retries: hollow` asserts something one probe cannot support,
 banned. It is easy to be careful about this in prose and sloppy in the output format, which
 is the only place the developer actually reads.
 
-### Known ceiling
-
-**Answer-key quality caps everything.** A wrong key marks a correct pick incorrect, with a
-confident explanation, and there is no judge left to blame. Mechanical grading did not remove
-this ceiling — it moved it earlier, from answer time to generation time, where at least it is
-inspectable and re-runnable.
-
-**Grounding in real code raises the stakes.** A question about a concept is wrong only if the
-model is ignorant. A question about *this interface in your codebase* requires the model to
-have correctly inferred why the interface exists, and when it infers wrong, the developer is
-marked wrong against a premise that is simply mistaken.
-
-Mitigations:
-
-- **The hypothesis is stored**, so when a question feels off, it is the first thing to read.
-- **A high `premise_rejected` rate is a bug report against grounding.** `/wrong` makes the
-  zealot measurable instead of merely survivable.
-- **Seeds are stored and re-runnable.** When the stage-3 prompt improves, every past seed can
-  be re-run into a better probe without needing transcripts back.
-
 ## Restraint
 
 The case against session-end prompts is right about how push-based tools die. Four
@@ -462,38 +432,6 @@ mechanic, and it works by backing off. Nothing in the code tracks a skip streak 
 matters less than it did when the question fired at you unprompted — today, not running
 `grask` already achieves it — but it is still the right behaviour for the `/grask` surface,
 where a skip is a signal the developer showed up and found nothing worth their time.
-
-## North-star metric
-
-**Not built.** This is the largest gap between this document and the code, and it is
-recorded here rather than quietly dropped, because everything else in the design is
-supposed to be evaluated against it.
-
-The intent: after the explanation — so it costs nothing in the moment it would distort —
-grask asks one thing.
-
-```
-was this worth asking?   [ y / n ]
-```
-
-**Yes-rate would be the north-star metric.** If grask consistently earns a yes, almost
-everything else becomes tractable; if it doesn't, no amount of taxonomy work or capture
-engineering matters. It is the direct measurement of the central risk named above, which
-still has no instrument.
-
-**It would replace skip rate as the quality signal.** Skip rate conflates *bad question* with
-*busy developer* — two things needing opposite responses, which it cannot distinguish. A
-binary asked after the answer separates them. A no-vote would also be diagnosable the way a
-wrong pick already is, against the recorded hypothesis.
-
-Constraints, so the metric does not violate the design that produced it: one keypress,
-skippable like everything else, never framed as feedback *on the developer*, and it never
-asks why. A follow-up "what was wrong with it?" is the same nagging this design rejects
-everywhere else.
-
-**What exists in the meantime** are two proxies, both weaker: the `premise_rejected` rate
-(the question misread the session) and the `skipped` rate (ambiguous, as above). Until the
-vote exists, question quality is judged by the author reading probes.
 
 ## Capture
 
@@ -524,7 +462,7 @@ was the whole of the observed topic instability.
 
 **Stage 2 — seed (`seed.py`, one call).** State, as a falsifiable claim, what the developer
 may have accepted without understanding, plus the topic, the verified quotes, the `file:line`
-refs, and the decision that shipped. Stored and re-runnable; see "Known ceiling".
+refs, and the decision that shipped. Stored and re-runnable; see "Limitations".
 
 **Stage 3 — probe (`probe.py`, one call).** Write one multiple-choice question about the
 mechanism, with the answer key and the explanation. Reads the full dialogue — turns, agent
@@ -532,8 +470,8 @@ replies, and the before/after text of edits — not just the seed.
 
 **Why stage 3 reads the transcript and not the seed.** A compressed seed is enough to name
 the topic; it is not enough to name the file, flag, or identifier that actually shipped, and
-a question that cannot do that is a generic question. At 0.8 KB of human input per session
-there is no cost side to this tradeoff. See "Measured cost".
+a question that cannot do that is a generic question. At ~0.8 KB of human input per session
+there is no cost side to this tradeoff.
 
 **Why one invocation.** The transcript is the fragile input: transcript files rotate, and the
 diff a seed references drifts as the branch moves. Reading it once, at the moment it is
@@ -542,56 +480,6 @@ freshest, is worth more than the work saved by deferring.
 **Why stage 3 is not lazy.** Deferring question generation to `grask` invocation would only
 produce questions for sessions someone chose to open — a biased sample of the one thing most
 in need of unbiased measurement. Rejected on those grounds, not on cost.
-
-### Measured cost (2026-07-20, 107-session corpus)
-
-This section previously deferred a set of optimizations against "a full transcript read."
-Measurement showed that read barely exists.
-
-```
-107 sessions      290 MB raw  ->  80 KB extracted   (3561x)
-mean human input             0.8 KB / session
-sessions with no human turn  41%
-sessions that edit files     40%   (43 of 107)
-code touched, median         36 KB / session
-code touched, worst         191 KB / session
-```
-
-Consequences:
-
-- **Stage 0 is free**, and it alone decides 41% of sessions produce nothing. The "heuristic
-  triage to save money" optimization is already built — it is stage 0 — and stage 1 only ever
-  sees sessions with real human input.
-- **Transcript size is not a cost driver.** 0.8 KB of prompts per session cannot justify a
-  cheaper model for any stage.
-- **Code is the only real input cost**, and only on the 40% of sessions that touch files.
-
-**End to end, measured across the corpus runner's own batches: $0.27 per session selected,
-with a 40% band both ways, and a 42% keep rate** (25 kept of 60 selected, $16.36). The
-estimate is deliberately one all-in number per session rather than a triage/seed/probe
-decomposition. The decomposition looks more principled and fits worse: two observed batches
-($1.62/10 and $14.74/50) cannot be reconciled by any single set of per-stage constants,
-because session length varies more than stage price does. A model that cannot fit the two
-points it was built from should not be dressed up as three constants.
-
-An earlier version of that estimate was fitted to n=14 from a different population — the
-hook's grask-only sessions — and under-quoted a 50-session run by 64%. Erring low is the
-harmful direction, because it under-quotes spend the developer then authorises. Quote the
-band, not the point.
-
-The one optimization still worth having is **diff rather than whole files**. The figures
-above count entire current files, which is the naive strategy; the session's actual diff is a
-fraction of that and is what a grounded probe needs anyway. Deferred until question quality
-is known, because a probe may well need surrounding context that a diff omits.
-
-Two smaller ones are already in `llm.py` and were worth more than they look. Every call
-inherits the user's Claude Code context, and the skill listing is the largest part of it —
-measured at 20.5k → 7.8k tokens ($0.146 → $0.078) on a config with 1822 installed skills, by
-passing `--disable-slash-commands`. Tools are disallowed for the same reason: grask sends one
-self-contained prompt and wants one JSON object back, and granting tools would let a stage
-wander into the repo, turning a fast classifier into an agent. `--bare` would cut more and is
-rejected — it reads auth strictly from `ANTHROPIC_API_KEY`, which breaks the "no second
-credential" property the model-selection section is built on.
 
 ### What counts as a topic
 
@@ -748,104 +636,78 @@ This is a default, not a setting. Three reasons it beats the alternatives:
   that call on their behalf.
 
 There is no provider abstraction and no `--model` override, per-stage or otherwise. An
-earlier draft reserved both; measurement argued against ever using them (see "Measured
-cost"), and an adapter with one implementation is a layer, not a design.
+earlier draft reserved both; transcripts turned out tiny — ~0.8 KB of human input per session
+— so no stage needs a cheaper model and none is offered, and an adapter with one
+implementation is a layer, not a design.
+
+**Each `claude -p` call is stripped down.** `--disable-slash-commands` drops the user's skill
+listing from the inherited context — the largest part of it. Tools are disallowed so a stage
+sends one self-contained prompt and gets one JSON object back rather than wandering into the
+repo as an agent. `--bare` would cut more and is rejected: it reads auth strictly from
+`ANTHROPIC_API_KEY`, which breaks the "no second credential" property above.
 
 ## Failure modes
 
-| Failure | Behavior |
-|---|---|
-| Hook gets a payload it cannot parse | Log it, return 0. Never speaks. |
-| Any stage raises during capture | Log the traceback, record the session `error`, exit 0. `capture_session` does not raise. |
-| Triage's model call fails | Recorded `error`, not `silent`. |
-| Stage 3 returns an unusable probe | Retried up to 3 times with the rejection quoted back; then the session is written off. |
-| Stored probe row is malformed | Served as `error` and consumed, so it stops blocking the queue. |
-| Question misreads the session | `/wrong` → `premise_rejected`, with an optional reason. |
-| Ctrl-C mid-question | Records nothing. The probe stays pending. |
-| Developer skips forever | Nothing happens. The 3-skip backoff is unbuilt; see "Restraint". |
+Two invariants make the rest fall out: **`capture.py` never raises** — nothing watches its
+exit code, so every failure becomes a row and a log line — and **the hook always returns 0**,
+so an unparseable payload is logged and swallowed and grask never speaks on the way out. Every
+other failure — a triage call that fails (recorded `error`, not `silent`), a stored row too
+malformed to grade (served as `error` and consumed so it stops blocking the queue), a
+misread session (`/wrong` → `premise_rejected`), a mid-question Ctrl-C (records nothing) —
+resolves to one of the recorded outcomes rather than to an exception.
 
 ## Testing
 
-223 tests, no network, no model. The design that makes this possible is the injected
-console in `ask.py` and the injected stages in `capture_session` — every path that would
-call a model takes the callable as an argument. One further test, marked `calibration`, runs
-the real pipeline against a real model and is deselected by default because it costs money.
+223 tests, no network, no model: every path that would call a model takes the callable as an
+argument — the injected console in `ask.py`, the injected stages in `capture_session` — so the
+whole pipeline is exercised against scripted inputs. One `calibration` test runs the real
+pipeline against a real model and is deselected by default because it costs money. What the
+tests **cannot** cover is whether the questions are any good — that is the north-star metric,
+and it needs the vote.
 
-- **Structural gates** (`test_probe.py`) — compound questions, duplicate options, an out-of-
-  range `correct`, a missing explanation. Each gate has the observed failure as a fixture,
-  not an invented one.
-- **The evidence rule** (`test_triage.py`) — a quote in the wrong turn, an `asked_why` that
-  asks nothing, an unknown signal. Rejections are per-moment.
-- **Quote verification** (`test_seed.py`) — a fabricated quote is dropped; a re-wrapped
-  genuine one survives; a seed with no surviving quote is refused.
-- **Selection stability** (`test_select.py`) — the winner does not move when a marginal
-  moment is added or dropped.
-- **Grading** (`test_ask.py`) — pick, skip, `/wrong`, and the malformed-row `error` path,
-  driven by a scripted console.
-- **Both delivery surfaces** (`test_cli.py`, `test_serve_record.py`) — including that `serve`
-  never emits the key or the explanation, and that a double `record` is refused rather than
-  overwriting.
-- **Silence** (`test_capture.py`) — a session with no human turns is recorded silent without
-  a model call; a triage error is recorded `error`, not `silent`.
-- **Storage** (`test_storage.py`) — TTL, newest-first, the option cap, and migration of a
-  database created before multiple choice.
+## Evaluating question quality
 
-**Not testable here, and named so it is not mistaken for covered:** whether the questions are
-any good. That is the north-star metric, and it needs the vote.
+grask stores no grade, score, or per-topic verdict: one probe identifies at most one
+misconception and cannot measure understanding (see "What one probe can and cannot say").
+The only metric that matters is whether the question was worth asking — and it is **not
+built**, the largest gap between this document and the code.
 
-## State of the build
+The intent is one binary after the explanation, where it costs nothing in the moment it
+would distort:
 
-Working end to end: capture (all four stages), storage, both delivery surfaces, mechanical
-grading, the corpus runner.
+```
+was this worth asking?   [ y / n ]
+```
 
-Not built, in the order they matter:
+**Yes-rate is the north-star** — the direct instrument for the central risk, whether an LLM
+reliably clears the "…huh" bar. Skip rate cannot stand in for it: a skip conflates *bad
+question* with *busy developer*, two things that need opposite responses. The vote must not
+violate the design that produced it — one keypress, skippable, never framed as feedback on
+the developer, and it never asks *why*. Until it exists, quality has only two weak proxies —
+the `premise_rejected` and `skipped` rates — and the author reading probes.
 
-1. **The "was this worth asking?" vote.** Without it, nothing else can be evaluated.
-2. **Cross-session dedup.** Two sessions can produce near-identical probes.
-3. **Resurfacing.** The half `IDEA.md` says matters most.
-4. **Three-skip backoff.**
-5. **Diff rather than whole files**, if cost ever becomes noticeable.
+## Limitations
 
-The order is deliberate and was arrived at the hard way. The capture pipeline is the fun part
-and the part that doesn't matter: a perfect extractor feeding a dull question is an
-uninstall; a rough extractor feeding a sharp one is a product. Stage 1 has now been refined
-twice against hand-judgement rather than against any downstream signal, which is the cost of
-building the measurable half after the interesting one. The vote is what stops that
-happening a third time.
+**Answer-key quality caps everything.** A wrong key marks a correct pick incorrect, with a
+confident explanation and no judge left to blame. Mechanical grading did not remove this
+ceiling — it moved it earlier, from answer time to generation time, where it is at least
+inspectable and re-runnable. Grounding in real code raises the stakes: a question about a
+concept is wrong only if the model is ignorant, but a question about *this interface in your
+codebase* requires the model to have inferred correctly why the interface exists, and when it
+infers wrong the developer is marked wrong against a premise that is simply mistaken. Three
+things blunt it — the hypothesis is stored (the first thing to read when a question feels
+off), a high `premise_rejected` rate is a bug report against grounding, and seeds are
+re-runnable into a better probe when the stage-3 prompt improves.
 
-## Open questions
-
-**Whether developers care — the top risk, and it is not an engineering one.** Claude wrote
-it, tests passed, PR merged. Twenty seconds is cheap, but it is not free, and the benefit
-lands months later if at all. Two independent reviews of `IDEA.md` ranked this above the
-judge problem; this design had it second. No test in this repo can settle it.
-
-Two things follow. First, no claim this design cannot support ("prevents outages") may be
-used to motivate it. Second, if the honest answer is "few developers care," the correct
-response is a good tool for the people who do — who self-select by installing it — not a
-wider net cast over people who don't. That is why the "watch everything" direction (Cursor,
-VS Code, git, Slack, design docs) stays rejected: surveillance does not manufacture caring,
-and the developer who won't answer one question won't install it.
-
-**Whether recognition is enough.** Multiple choice removed the judge and with it both of its
-failure modes, but a pick is weaker evidence than an explanation. If passes turn out to be
+**Whether recognition is enough is unresolved.** Multiple choice removed the judge and both
+of its failure modes, but a pick is weaker evidence than an explanation. If passes turn out
 cheap — developers eliminating three options without understanding the mechanism — the fix is
-better distractors, not the judge's return. If better distractors are not enough, this
-question reopens for real.
+better distractors, not the judge's return. If that is not enough, the judge question reopens
+for real.
 
-**LLM cost.** *Whose key* is settled — the user's own Claude Code session, inherited rather
-than configured. A hosted option would drag back a server, accounts, and billing, and is
-rejected for that reason rather than left open.
-
-What remains open is the amount. A qualifying session costs three model calls on the
-developer's own quota, spent after they have walked away, on a question they may never
-answer. Stage 0 and triage keep this off most sessions, and the measured all-in figure is
-$0.27 per session *selected* — but it lands on someone who did not opt into that specific
-spend. If it becomes noticeable, the deferred optimizations get pulled forward.
-
-**Terminal-only ceiling.** grask reaches Claude Code users and no one else. Judged correct
-rather than limiting — that is where the described problem lives — but it is a deliberate
-market cap and should be revisited only with evidence.
+**Grounding reads whole files, not the session diff.** Switching to the diff is the one
+deferred cost optimization, held until question quality is known, because a probe may need
+surrounding context the diff omits.
 
 ## Rejected designs
 
