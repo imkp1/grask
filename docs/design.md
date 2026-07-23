@@ -136,12 +136,64 @@ a stray keypress must not consume the question.
 | `grask` | Ask the next pending question in the terminal. The product. |
 | `grask serve --json` / `grask record <id>` | Machine-readable pair behind `/grask`; also the delivery test harness. |
 | `grask skill [--install] [--dir]` | Write the `/grask` skill into a skills directory. |
-| `grask-hook` | The `SessionEnd` capture trigger. Registered in `settings.json`; never invoked by hand. |
+| `grask install` / `grask uninstall` | Wire (or remove) the skill and the `SessionEnd` hook in `~/.claude`. The standalone path; the plugin does the same on install. |
+| `grask doctor` | The one diagnostic — skill, hook, `claude`, and `uv`. Exit 1 on any failure. |
+| `grask-hook` | The `SessionEnd` capture trigger. Registered by `grask install` in `settings.json`, or by the plugin's `hooks.json`; never invoked by hand. |
 
 There is no `grask <topic>` entry point: a hand-typed topic is the one path where the fatal
 failure — misreading code the developer actually wrote — cannot occur, so a probe validated
 that way would measure a quality that does not transfer. The corpus runner
 (`grask.capture_run`) exercises the same core against real transcripts instead.
+
+### Distribution
+
+Two install surfaces over one unchanged core. They are not two products: each wires the same
+`SessionEnd` capture hook and the same `/grask` skill, and differ only in how grask's code is
+located and run.
+
+**Plugin (recommended).** The repository is also a Claude Code plugin — `.claude-plugin/`
+holds the plugin and marketplace manifests, `hooks/hooks.json` the hooks, `skills/grask/` the
+skill. `/plugin install grask` registers everything in one step, no `settings.json` editing
+and no separate `pip`. The `SessionEnd` hook runs `uv run --project "${CLAUDE_PLUGIN_ROOT}"
+grask-hook`: the plugin carries grask's source, and `uv` provisions Python 3.12 on first use
+(grask has no other dependencies). The plugin owns its code and its runtime as one unit, which
+is why it invokes `uv run` rather than assuming a separately-installed `grask` on PATH.
+
+*Pre-warm is an invariant, not an optimization.* A `SessionStart` hook builds the `uv`
+environment once, on session open, so `SessionEnd` never blocks the developer's exit on a cold
+`uv` resolution — the same non-blocking promise the detached worker already makes. It exists to
+satisfy *no user-visible latency at `SessionEnd`*, and a contributor who understands that will
+not remove it.
+
+**Standalone (`grask install`).** For the bare `grask` command line, or for anyone who would
+rather not run a plugin: `uv tool install grask`, then `grask install`. It writes the skill and
+**idempotently** merges the `SessionEnd` hook into `~/.claude/settings.json` — a second install
+adds nothing, and hooks other tools put there are preserved. `grask uninstall` reverses both and
+leaves the database alone. The merge is the one delicate part, because it edits a file the
+developer did not ask grask to own; every way it could corrupt that file is pinned in tests.
+
+`grask install` validates only grask's own surfaces. It does **not** check for the `claude`
+binary or a live authentication: someone may install grask before Claude, or authenticate
+later, and failing an otherwise-correct install on that would be wrong. Those are environmental
+concerns, and diagnosing them belongs to `grask doctor`.
+
+**Diagnostics have one owner.** Hooks never speak — a hook that raised as the developer left
+would surface a scary message about a tool they cannot see. So `grask doctor` is the canonical
+diagnostic (`claude` present, `uv` present, hook wired, skill installed), and interactive
+surfaces reuse its checks rather than duplicating them: a bare `grask` with capture unwired
+nudges toward `grask install`. `doctor` reports as structured checks and exits non-zero on any
+failure, so it is usable in CI and pasteable into a bug report.
+
+*Namespacing.* Plugin skills are prefixed by the runtime, so the plugin path exposes the skill
+as `/grask:grask` rather than a bare `/grask`. This is a runtime quirk, not part of grask's
+identity, and may change if the runtime later allows aliasing; the standalone install keeps the
+bare `/grask`.
+
+*SKILL.md has one source.* The canonical file is `src/grask/SKILL.md` — the wheel reads it
+through `importlib.resources` — and the plugin needs its own copy at `skills/grask/SKILL.md`. A
+CI test asserts the two are byte-identical. A tracked symlink would be more elegant and less
+robust: zip archives, Windows, and checkouts without symlink support all break it, so the boring
+copy wins.
 
 ## The questioning engine
 
@@ -616,7 +668,8 @@ second visit "the half that matters most".
 
 - Python 3.12+, uv. No runtime dependencies.
 - SQLite. Local file, no server.
-- CLI + a `SessionEnd` hook + a Claude Code skill. No HTTP, no frontend, no build step.
+- CLI + a `SessionEnd` hook + a Claude Code skill, shipped both as a plugin and as a `uv tool`
+  install. No HTTP, no frontend, no build step. See "Distribution".
 - LLM: the user's own Claude Code CLI, shelled out to. `llm.py` is the only module that
   knows a subprocess is involved.
 
@@ -658,7 +711,7 @@ resolves to one of the recorded outcomes rather than to an exception.
 
 ## Testing
 
-223 tests, no network, no model: every path that would call a model takes the callable as an
+243 tests, no network, no model: every path that would call a model takes the callable as an
 argument — the injected console in `ask.py`, the injected stages in `capture_session` — so the
 whole pipeline is exercised against scripted inputs. One `calibration` test runs the real
 pipeline against a real model and is deselected by default because it costs money. What the
