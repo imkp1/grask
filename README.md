@@ -18,7 +18,7 @@ you run `/grask`.
 > **Most sessions produce no question. That silence is the feature** — not a failure to
 > find something.
 
-![grask: a session ends, and the next morning one question is waiting](docs/grask.gif)
+![grask: I have code in production I couldn't explain — one multiple-choice question about the code you just shipped](docs/grask.gif)
 
 ## Example
 
