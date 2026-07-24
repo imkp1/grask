@@ -89,6 +89,34 @@ both surfaces invoke grask by name, so it has to resolve without a path.
 `grask uninstall` reverses both (your captured data is left in place), and `grask doctor`
 checks the wiring and the environment it needs.
 
+### Updating
+
+Neither path updates itself, and both hold a *copy* of the `/grask` skill — so a new
+release reaches you only when you refresh that copy.
+
+Plugin:
+
+```
+/plugin marketplace update grask
+/reload-plugins
+```
+
+Claude Code disables auto-update for third-party marketplaces by default, and only ships an
+update when the plugin's `version` field changes — which every grask release bumps, so the
+plugin cache path changes with it and you get a clean refetch rather than a silent no-op.
+
+Standalone:
+
+```bash
+uv tool upgrade grask --prerelease=allow
+grask install
+```
+
+Run `grask install` again after the upgrade. It is idempotent, and it is what rewrites
+`~/.claude/skills/grask/SKILL.md` — upgrading the package alone leaves the previous skill
+file sitting in your skills directory. `grask doctor` will tell you what is wired and what
+is not.
+
 The capture hook spawns a detached worker and returns immediately — it never blocks the end
 of your session, and it never speaks. Failures go to `~/.claude/grask/grask.log`, never to
 your terminal. If capture ever seems off, `grask doctor` is the one place that will tell you
