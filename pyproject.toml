@@ -1,6 +1,6 @@
 [project]
 name = "grask"
-version = "0.1.0-rc1"
+version = "0.1.0-rc2"
 description = "One question about your own code, at the end of a Claude Code session."
 readme = "README.md"
 requires-python = ">=3.8"
