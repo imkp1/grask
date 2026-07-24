@@ -55,10 +55,17 @@ time). Where a step below writes `grask …`, run `"$GRASK" …`.
      file names it needs. The question must be readable inside the picker
      itself; do not rely on markdown printed before it. Hold `topic` back for
      step 3.
-   - One option per stored option, in stored order:
+   - `header`: a short constant chip — use `Probe`.
+   - One option per stored option, in stored order. Every option needs all
+     three fields below; `label` and `description` are required by the question
+     tool's schema, and omitting `description` fails the call outright:
      - `label`: the letter plus the first few distinguishing words of the
        option (e.g. `a) dedup to a no-op`). Keep labels short; they are not the
        full text.
+     - `description`: the next clause or so of the same stored option text,
+       carrying on from where the label stopped, then cut off. It is a longer
+       mechanical excerpt and nothing else — never a gloss, a summary, or a
+       hint about whether the option holds.
      - `preview`: the full stored option text, verbatim and unabridged. The
        side-by-side preview pane is where the developer reads the option.
    - In exactly one option's preview (or the question text), append a footer
