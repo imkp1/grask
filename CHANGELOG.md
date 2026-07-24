@@ -6,7 +6,7 @@ SQLite schema under `GRASK_HOME` carries no migration guarantee yet.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/) once there is a 1.0 to be compatible with.
 
-## Unreleased
+## 0.1.0-rc2
 
 - **Runs on Python 3.8+ (was 3.12+).** The 3.12 floor was almost entirely accidental: the only
   hard blocker was `datetime.UTC` (a 3.11 alias for `timezone.utc`) plus one use of PEP 695 type
