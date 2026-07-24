@@ -79,3 +79,13 @@ dev = [
     "ruff>=0.14",
     "mypy>=1.14",
 ]
+
+[tool.uv]
+# The package ships to end users at `requires-python = ">=3.8"` with no runtime
+# deps, but development happens on modern Python: pytest 9 and mypy need >= 3.10.
+# uv resolves the lock universally across requires-python, so without this it
+# would try to satisfy the dev group down to 3.8 and fail. Restrict the lock to
+# the dev toolchain's actual range; end users are unaffected (they install the
+# wheel, not this lock). The 3.8 floor is exercised by CI's `floor` job, which
+# uses `--no-project --with pytest` and never touches this lockfile.
+environments = ["python_version >= '3.10'"]
