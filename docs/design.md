@@ -159,14 +159,14 @@ python3 -m grask.hook`: the plugin carries grask's source under `src/`, and gras
 `python3`. That is the whole runtime — no `uv`, no virtualenv, no build step. It is affordable
 because grask has **no third-party dependencies** and reaches the model by running the `claude`
 binary, not through an SDK; the one thing it needs from the environment is a Python new enough
-(`≥ 3.12`), which `grask doctor` gates on. The plugin owns its code and runs it directly, rather
+(`≥ 3.8`), which `grask doctor` gates on. The plugin owns its code and runs it directly, rather
 than assuming a separately-installed `grask` on PATH.
 
 *Why not `uv`?* An earlier design wrapped every hook in `uv run --project`, which pinned Python
 3.12 but dragged a virtualenv, a build, and a `SessionStart` pre-warm invented solely to hide the
 cold-resolution latency at session exit. For a zero-dependency package that shells out to
 `claude`, that machinery paid for a runtime grask does not have. Dropping it removed the venv,
-the pre-warm, and `uv` from the check surface — replaced by one honest `python3 ≥ 3.12` gate in
+the pre-warm, and `uv` from the check surface — replaced by one honest `python3 ≥ 3.8` gate in
 `doctor`. Provisioning the interpreter is now the user's job (or their package manager's), which
 is the same deal every other Python tool offers.
 
@@ -682,7 +682,7 @@ second visit "the half that matters most".
 
 ## Stack
 
-- Python 3.12+, uv. No runtime dependencies.
+- Python 3.8+, uv. No runtime dependencies.
 - SQLite. Local file, no server.
 - CLI + a `SessionEnd` hook + a Claude Code skill, shipped both as a plugin and as a `uv tool`
   install. No HTTP, no frontend, no build step. See "Distribution".

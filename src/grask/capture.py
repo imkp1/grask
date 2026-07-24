@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import sys
 import traceback
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from grask.dialogue import extract_dialogue as _extract_dialogue
@@ -31,7 +31,7 @@ def log(message: str) -> None:
     try:
         path = grask_home() / "grask.log"
         path.parent.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now(UTC).isoformat()
+        stamp = datetime.now(timezone.utc).isoformat()
         with path.open("a", encoding="utf-8") as handle:
             handle.write(f"{stamp} {message}\n")
     except Exception:

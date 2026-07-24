@@ -30,7 +30,10 @@ prompt to fix a bug, that is a signal the check belongs in Python.
 
 ## Development setup
 
-Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
+Requires Python **3.10+** and [uv](https://docs.astral.sh/uv/). Note this is higher than what
+grask *runs* on: the shipped package supports Python 3.8+ (zero runtime dependencies), but the
+dev toolchain — `pytest` and `mypy` — needs 3.10+, so `uv sync` resolves the lock against 3.10+
+only. CI's `floor` job separately proves the package still works on 3.8.
 
 ```bash
 git clone https://github.com/imkp1/grask && cd grask
@@ -42,7 +45,8 @@ they are different jobs and the README covers the second.
 
 ## The three checks
 
-CI runs exactly these, on 3.12 and 3.13. Run them before opening a pull request:
+CI runs exactly these, on 3.12 and 3.13, and runs the test suite once more on the 3.8 floor. Run
+them before opening a pull request:
 
 ```bash
 uv run pytest          # offline, no model calls, sub-second

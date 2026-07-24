@@ -32,7 +32,7 @@ HOOK_COMMAND = "grask-hook"
 
 # Grask needs a Python this new; `grask doctor` gates on it. Kept as a constant so
 # the shim, the docs, and the check cannot drift to three different numbers.
-MIN_PYTHON = (3, 12)
+MIN_PYTHON = (3, 8)
 
 # Claude Code's user-level config. Both are under ~/.claude; kept as functions so
 # tests point them at a tmp dir and never touch the developer's real setup.
@@ -128,10 +128,22 @@ def remove_hook(settings: dict[str, Any], command: str = HOOK_COMMAND) -> bool:
     return changed
 
 
+def packaged_skill_text() -> str:
+    """Read the shipped SKILL.md, working from a clone or an installed wheel.
+
+    `resources.files` is the clean API but arrived in 3.9; on 3.8 it is absent, so
+    fall back to the legacy `read_text`. The fallback only runs on 3.8, so its
+    deprecation on 3.11+ is never triggered."""
+    try:
+        return (resources.files("grask") / "SKILL.md").read_text(encoding="utf-8")
+    except AttributeError:  # Python 3.8 has no resources.files
+        return resources.read_text("grask", "SKILL.md", encoding="utf-8")
+
+
 def _write_skill(target_dir: Path) -> Path:
     """Write the shipped SKILL.md into <dir>/grask/SKILL.md. The directory name is
     the slash command, so it has to be `grask/` for `/grask` to exist."""
-    text = (resources.files("grask") / "SKILL.md").read_text(encoding="utf-8")
+    text = packaged_skill_text()
     target = target_dir / "grask" / "SKILL.md"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(text, encoding="utf-8")

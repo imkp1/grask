@@ -1,7 +1,7 @@
 # grask
 
 [![CI](https://github.com/imkp1/grask/actions/workflows/ci.yml/badge.svg)](https://github.com/imkp1/grask/actions/workflows/ci.yml)
-[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/downloads/)
+[![Python 3.8+](https://img.shields.io/badge/python-3.8%2B-blue)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Status: alpha](https://img.shields.io/badge/status-alpha-orange)](#status)
 
@@ -56,7 +56,7 @@ wires the same `SessionEnd` capture hook and the same `/grask` skill.
 
 ### As a plugin (recommended)
 
-Needs a `python3` (≥ 3.12) on your PATH. Inside Claude Code:
+Needs a `python3` (≥ 3.8) on your PATH. Inside Claude Code:
 
 ```
 /plugin marketplace add imkp1/grask
@@ -67,7 +67,7 @@ That is the whole setup — no `settings.json` editing, no separate `pip` instal
 The plugin carries grask's source under `src/` and runs it with plain `python3`; grask has no
 third-party dependencies, so there is no virtualenv and no build step. A `SessionStart` step
 writes a small shim so the `/grask` skill can find the plugin's copy of grask. If your `python3`
-is older than 3.12, `grask doctor` will say so. The skill is namespaced by the runtime, so you
+is older than 3.8, `grask doctor` will say so. The skill is namespaced by the runtime, so you
 type `/grask:grask`.
 
 ### Standalone

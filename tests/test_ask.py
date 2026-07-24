@@ -126,7 +126,7 @@ class TestDisplay:
         ask(PENDING, console)
 
         listing = "\n".join(console.shown)
-        for letter, option in zip("abc", PENDING.options, strict=True):
+        for letter, option in zip("abc", PENDING.options):
             assert f"{letter}) {option}" in listing
 
     def test_the_pick_prompt_names_the_letter_range(self):

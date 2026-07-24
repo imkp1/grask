@@ -18,7 +18,6 @@ import argparse
 import json
 import sqlite3
 import sys
-from importlib import resources
 from pathlib import Path
 
 from grask.ask import (
@@ -40,6 +39,7 @@ from grask.install import (
     doctor,
     hook_configured,
     install,
+    packaged_skill_text,
     uninstall,
     write_runner_shim,
 )
@@ -64,7 +64,7 @@ def _skill(args: argparse.Namespace) -> int:
     and from an installed wheel. Telling the user to copy a path out of a
     checkout only ever worked for people who had a checkout.
     """
-    text = (resources.files("grask") / "SKILL.md").read_text(encoding="utf-8")
+    text = packaged_skill_text()
     if not args.install:
         print(text, end="")
         return 0

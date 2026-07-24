@@ -49,6 +49,24 @@ jobs:
       - name: pytest
         run: uv run pytest -q
 
+  # grask's runtime floor is Python 3.8 (requires-python), but its dev toolchain
+  # (pytest 9, mypy) needs newer, so 3.8 cannot go in the matrix above. This job
+  # runs the suite on 3.8 with a 3.8-compatible pytest and no install (PYTHONPATH,
+  # as the hooks do). It is the only guard against a 3.9+ stdlib API — e.g.
+  # importlib.resources.files — silently creeping back into src and re-breaking
+  # the pyenv-3.9 machines this floor exists for.
+  floor:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: src
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: pytest on the 3.8 floor
+        run: uv run --python 3.8 --with pytest --no-project python -m pytest -q
+
   # The README's install is `uv tool install .`, and both delivery surfaces
   # invoke `grask` by name. That contract broke once already without any test
   # noticing, because the suite imports the package and never installs it.
