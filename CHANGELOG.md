@@ -6,7 +6,7 @@ SQLite schema under `GRASK_HOME` carries no migration guarantee yet.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/) once there is a 1.0 to be compatible with.
 
-## Unreleased
+## 0.1.0-rc3
 
 - **Fix: the first `/grask` question call failed.** The skill described options as `label` +
   `preview`, but the question tool's schema requires `label` and `description` — `preview` is the
