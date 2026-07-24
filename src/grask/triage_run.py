@@ -139,9 +139,12 @@ def main() -> None:
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         verdicts = list(pool.map(triage, sessions))
 
-    # strict: pool.map preserves length and order, so a mismatch here is a bug in
-    # that assumption rather than a short session list to be silently truncated.
-    rows = [_row(s, v) for s, v in zip(sessions, verdicts, strict=True)]
+    # pool.map preserves length and order, so a mismatch here is a bug in that
+    # assumption rather than a short session list to be silently truncated. (An
+    # explicit guard rather than zip(strict=True), which needs 3.10.)
+    if len(sessions) != len(verdicts):
+        raise RuntimeError("triage returned a different number of verdicts than sessions")
+    rows = [_row(s, v) for s, v in zip(sessions, verdicts)]
     # Nothing else here opens a Store, so this is the only thing that would
     # create GRASK_HOME.
     args.out.parent.mkdir(parents=True, exist_ok=True)

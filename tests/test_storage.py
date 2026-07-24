@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -25,7 +25,7 @@ from grask.storage import PROBE_TTL_DAYS, Store, grask_home
 
 
 def iso_days_ago(days: int) -> str:
-    return (datetime.now(UTC) - timedelta(days=days)).isoformat()
+    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
 
 def an_interrogation(*, probe_id: int, turn_count: int = 1) -> Interrogation:

@@ -30,7 +30,7 @@ prompt to fix a bug, that is a signal the check belongs in Python.
 
 ## Development setup
 
-Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
+Requires Python 3.8+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 git clone https://github.com/imkp1/grask && cd grask
@@ -42,7 +42,8 @@ they are different jobs and the README covers the second.
 
 ## The three checks
 
-CI runs exactly these, on 3.12 and 3.13. Run them before opening a pull request:
+CI runs exactly these, on 3.12 and 3.13, and runs the test suite once more on the 3.8 floor. Run
+them before opening a pull request:
 
 ```bash
 uv run pytest          # offline, no model calls, sub-second

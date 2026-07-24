@@ -17,7 +17,7 @@ self-proving come first. See "What counts as a topic" in the design doc.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Protocol
+from typing import Protocol, TypeVar
 
 # Lower is better.
 SIGNAL_RANK = {
@@ -37,6 +37,9 @@ class Rankable(Protocol):
     turn: int
 
 
+M = TypeVar("M", bound=Rankable)
+
+
 def rank_key(moment: Rankable) -> tuple[int, int]:
     """Sort key for one moment. Lower sorts first.
 
@@ -50,7 +53,7 @@ def rank_key(moment: Rankable) -> tuple[int, int]:
     return (SIGNAL_RANK.get(moment.signal, UNRANKED), -moment.turn)
 
 
-def select[M: Rankable](moments: Sequence[M]) -> M | None:
+def select(moments: Sequence[M]) -> M | None:
     """The one moment worth a question, or None if there were none.
 
     Generic, not `Rankable -> Rankable`. Ranking reads exactly two attributes and

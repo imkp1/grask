@@ -9,8 +9,9 @@ check; these run offline with no Claude Code installed.
 from __future__ import annotations
 
 import json
-from importlib import resources
 from pathlib import Path
+
+from grask.install import packaged_skill_text
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -20,7 +21,7 @@ def test_plugin_skill_mirrors_the_packaged_one():
     needs its own copy at `skills/grask/SKILL.md`. A CI-guarded identical copy is
     the boring, robust alternative to a symlink that zip archives and Windows
     break."""
-    canonical = (resources.files("grask") / "SKILL.md").read_text(encoding="utf-8")
+    canonical = packaged_skill_text()
     mirror = (REPO / "skills" / "grask" / "SKILL.md").read_text(encoding="utf-8")
     assert mirror == canonical, "run: cp src/grask/SKILL.md skills/grask/SKILL.md"
 

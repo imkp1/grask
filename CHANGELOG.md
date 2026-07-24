@@ -8,12 +8,18 @@ versioning follows [SemVer](https://semver.org/) once there is a 1.0 to be compa
 
 ## Unreleased
 
+- **Runs on Python 3.8+ (was 3.12+).** The 3.12 floor was almost entirely accidental: the only
+  hard blocker was `datetime.UTC` (a 3.11 alias for `timezone.utc`) plus one use of PEP 695 type
+  syntax, both since removed. `grask doctor` now gates on `python3 ≥ 3.8`. This matters because
+  the plugin runs on whatever `python3` the machine has — on a pyenv box that can be 3.9, where
+  the old code crashed every hook on import. Ruff now targets `py38` so 3.9+ syntax cannot creep
+  back in; the suite runs green on 3.8 and 3.14.
 - **Plugin runtime no longer uses `uv`.** The plugin now runs grask with plain
   `env PYTHONPATH="${CLAUDE_PLUGIN_ROOT}/src" python3 -m grask.…` — no virtualenv, no build,
   no `uv`. grask has no third-party dependencies and reaches the model through the `claude`
   binary, so the venv machinery (and the `SessionStart` pre-warm that only existed to hide its
   cold-start latency) paid for a runtime grask does not have. The one requirement is now a
-  `python3 ≥ 3.12`, which `grask doctor` gates on in place of the old `uv on PATH` check.
+  `python3 ≥ 3.8`, which `grask doctor` gates on in place of the old `uv on PATH` check.
   Standalone (`uv tool install grask`) is unchanged.
 - **Fix: `/grask` under a plugin-only install.** The skill called a bare `grask`, which the
   plugin deliberately does not put on PATH — so `/grask` failed for anyone who installed the

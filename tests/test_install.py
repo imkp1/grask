@@ -209,7 +209,7 @@ def test_doctor_checks_are_structured_data(tmp_path: Path):
     labels = [label for label, _, _ in checks]
     assert labels == [
         "claude on PATH",
-        "python3 ≥ 3.12",
+        "python3 ≥ 3.8",
         "delivery skill present",
         "capture hook wired",
     ]
@@ -235,19 +235,19 @@ def test_doctor_passes_when_everything_is_present(tmp_path: Path, monkeypatch, c
     assert code == 0
 
 
-def test_doctor_flags_a_python_older_than_3_12(tmp_path: Path, monkeypatch, capsys):
+def test_doctor_flags_a_python_older_than_the_floor(tmp_path: Path, monkeypatch, capsys):
     """The gate that replaces `uv`: an interpreter present but too old is a FAIL
     with a legible reason, not a silent pass into a hook that won't import."""
     skills = tmp_path / "skills"
     settings = tmp_path / "settings.json"
     install(skills=skills, settings=settings)
     monkeypatch.setattr(install_mod.shutil, "which", lambda name: f"/usr/bin/{name}")
-    monkeypatch.setattr(install_mod, "_python_version", lambda _p: (3, 11, 9))
+    monkeypatch.setattr(install_mod, "_python_version", lambda _p: (3, 7, 5))
 
     code = doctor(skills=skills, settings=settings)
     out = capsys.readouterr().out
     assert code == 1
-    assert "grask needs ≥ 3.12" in out
+    assert "grask needs ≥ 3.8" in out
 
 
 def test_python_check_reports_missing_interpreter(monkeypatch):

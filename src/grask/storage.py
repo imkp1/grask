@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from grask.ask import Interrogation, PendingProbe
@@ -145,7 +145,7 @@ def grask_home() -> Path:
 
 
 def _now() -> str:
-    return datetime.now(UTC).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _inserted_id(cursor: sqlite3.Cursor) -> int:
@@ -299,7 +299,7 @@ class Store:
         options are not valid JSON pass the filter deliberately: they must be
         served so the caller can record the `error` they are.
         """
-        cutoff = (datetime.now(UTC) - timedelta(days=PROBE_TTL_DAYS)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=PROBE_TTL_DAYS)).isoformat()
         row = self.conn.execute(
             "SELECT p.id, p.question, p.options, p.correct_idx, p.explanation,"
             " p.created_at, s.topic, s.hypothesis"

@@ -3,7 +3,7 @@ name = "grask"
 version = "0.1.0-rc1"
 description = "One question about your own code, at the end of a Claude Code session."
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.8"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Kumar Prateek" }]
@@ -12,7 +12,7 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Quality Assurance",
     "Typing :: Typed",
@@ -52,13 +52,16 @@ markers = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py38"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.mypy]
-python_version = "3.12"
+# Grask targets 3.8 (see requires-python); mypy no longer type-checks against
+# anything below 3.10, so this is pinned as low as mypy allows. Ruff's py38
+# target is what actually guards the floor against 3.9+ syntax creeping back in.
+python_version = "3.10"
 files = ["src/grask"]
 # The package ships py.typed, which is a promise to anyone importing it. These
 # settings are what make that promise checkable rather than decorative.
