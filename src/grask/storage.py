@@ -20,6 +20,7 @@ import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Literal
 
 from grask.ask import Interrogation, PendingProbe
 from grask.probe import Probe, Rubric
@@ -108,6 +109,9 @@ ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
 # query time rather than stored, so nothing has to sweep and no lifecycle column
 # can fall out of sync with the clock.
 PROBE_TTL_DAYS = 7
+
+# The four ways `next_probe` can come back with nothing. See `empty_reason`.
+EmptyReason = Literal["over_cap", "expired", "caught_up", "never"]
 
 
 def _pending_from_row(row: sqlite3.Row) -> PendingProbe:
@@ -316,6 +320,43 @@ class Store:
         ).fetchone()
 
         return None if row is None else _pending_from_row(row)
+
+    def empty_reason(self, *, max_options: int | None = None) -> EmptyReason:
+        """Why `next_probe` came back empty, for callers that must explain it.
+
+        Only meaningful once `next_probe` has returned None — this does not
+        re-check that, it just accounts for the four ways a queue can look empty:
+
+        - `over_cap`: servable rows exist but carry more options than
+          `max_options`. First in precedence because it is the only reason with
+          an action attached — another surface (the terminal) can still ask them,
+          so a caller that reports "nothing queued" here contradicts itself.
+        - `expired`: probes were raised and went unasked past `PROBE_TTL_DAYS`.
+        - `caught_up`: probes exist and none is still waiting.
+        - `never`: no probe has ever been written.
+
+        A row invisible to `next_probe` for some other reason (options stored as
+        NULL) counts as `caught_up`: probes exist, none can be served, and
+        claiming nothing was ever captured would be the falser of the two.
+        """
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=PROBE_TTL_DAYS)).isoformat()
+        unasked = "FROM probes p LEFT JOIN asks a ON a.probe_id = p.id WHERE a.id IS NULL"
+        row = self.conn.execute(
+            "SELECT"
+            "  (SELECT COUNT(*) FROM probes) AS total,"
+            f"  (SELECT COUNT(*) {unasked}"
+            "     AND p.created_at >= :cutoff AND p.options IS NOT NULL"
+            "     AND :cap IS NOT NULL AND json_valid(p.options) = 1"
+            "     AND json_array_length(p.options) > :cap) AS over_cap,"
+            f"  (SELECT COUNT(*) {unasked} AND p.created_at < :cutoff) AS expired",
+            {"cutoff": cutoff, "cap": max_options},
+        ).fetchone()
+
+        if row["over_cap"]:
+            return "over_cap"
+        if row["expired"]:
+            return "expired"
+        return "caught_up" if row["total"] else "never"
 
     def probe_by_id(self, probe_id: int) -> PendingProbe | None:
         """The stored probe, whether or not it is still pending.

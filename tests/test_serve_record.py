@@ -9,14 +9,15 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
-from grask.cli import main
+from grask.cli import EMPTY_QUEUE_NOTES, main
 from grask.probe import Probe, Rubric
 from grask.seed import Seed
-from grask.storage import Store
+from grask.storage import PROBE_TTL_DAYS, Store
 
 RUBRIC = Rubric(
     topic="idempotency of the retry path",
@@ -112,13 +113,43 @@ class TestServe:
         assert first["probe_id"] == second["probe_id"] == probe_id
         assert asks_rows(db) == []
 
-    def test_an_empty_queue_is_pending_null(self, db: Path, capsys):
+    def test_a_never_captured_queue_says_so(self, db: Path, capsys):
         Store(db).close()  # create the schema, store nothing
 
         code = run(db, ["serve", "--json"])
 
         assert code == 0
-        assert json.loads(capsys.readouterr().out) == {"pending": None}
+        assert json.loads(capsys.readouterr().out) == {
+            "pending": None,
+            "reason": "never",
+            "note": EMPTY_QUEUE_NOTES["never"],
+        }
+
+    def test_an_answered_queue_says_caught_up_not_never_captured(self, db: Path, capsys):
+        probe_id = stored_probe(db)
+        run(db, ["record", str(probe_id), "--pick", "a"])
+        capsys.readouterr()
+
+        run(db, ["serve", "--json"])
+
+        served = json.loads(capsys.readouterr().out)
+        assert served["reason"] == "caught_up"
+        assert served["note"] == EMPTY_QUEUE_NOTES["caught_up"]
+
+    def test_an_expired_queue_says_expired(self, db: Path, capsys):
+        stored_probe(db)
+        with Store(db) as store:
+            stale = (
+                datetime.now(timezone.utc) - timedelta(days=PROBE_TTL_DAYS + 1)
+            ).isoformat()
+            store.conn.execute("UPDATE probes SET created_at = ?", (stale,))
+            store.conn.commit()
+
+        run(db, ["serve", "--json"])
+
+        served = json.loads(capsys.readouterr().out)
+        assert served["reason"] == "expired"
+        assert served["note"] == EMPTY_QUEUE_NOTES["expired"]
 
     def test_a_five_option_row_is_left_pending_not_consumed(self, db: Path, capsys):
         wide = replace(
@@ -129,7 +160,13 @@ class TestServe:
         code = run(db, ["serve", "--json"])
 
         assert code == 0
-        assert json.loads(capsys.readouterr().out) == {"pending": None}
+        # Empty for this surface only, and the note has to say so — the terminal
+        # path can still ask a five-option row.
+        assert json.loads(capsys.readouterr().out) == {
+            "pending": None,
+            "reason": "over_cap",
+            "note": EMPTY_QUEUE_NOTES["over_cap"],
+        }
         assert asks_rows(db) == []
         # The terminal path can still see it.
         with Store(db) as store:

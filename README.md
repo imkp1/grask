@@ -122,6 +122,29 @@ of your session, and it never speaks. Failures go to `~/.claude/grask/grask.log`
 your terminal. If capture ever seems off, `grask doctor` is the one place that will tell you
 why.
 
+### Approving the two commands it runs
+
+Optional, and only for the `/grask` skill inside Claude Code. The skill reaches
+grask by running its shim, so the first `/grask` of a session asks you to approve a
+`Bash` command. To approve the two calls once instead of every session, add them to
+the `allow` list in `~/.claude/settings.json`:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(~/.claude/grask/grask serve --json)",
+      "Bash(~/.claude/grask/grask record:*)"
+    ]
+  }
+}
+```
+
+Those two are the skill's entire interface: `serve` prints the next question and
+writes nothing, `record` grades one answer. Neither takes input from the model
+beyond a probe id and your pick. Skipping this only costs you a keystroke per
+session.
+
 ## Use
 
 ```bash
