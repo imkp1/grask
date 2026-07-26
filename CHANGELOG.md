@@ -6,7 +6,7 @@ SQLite schema under `GRASK_HOME` carries no migration guarantee yet.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/) once there is a 1.0 to be compatible with.
 
-## Unreleased
+## 0.1.0-rc4
 
 - **An empty queue now says which kind of empty it is.** `serve` returned a bare
   `{"pending": null}` and the terminal printed a bare `nothing to ask about.`, which reads

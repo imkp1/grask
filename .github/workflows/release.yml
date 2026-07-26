@@ -46,7 +46,8 @@ jobs:
         run: |
           uv tool install dist/*.whl
           grask --help
-          test "$(grask serve --json)" = '{"pending": null}'
+          grask serve --json | grep -q '"pending": null'
+          grask serve --json | grep -q '"reason": "never"'
           echo '{}' | grask-hook
           # The wheel is what a `pip install` produces, so this is the only
           # place the shipped skill can be checked against a real release.
