@@ -43,9 +43,26 @@ from grask.install import (
     uninstall,
     write_runner_shim,
 )
-from grask.storage import Store
+from grask.storage import PROBE_TTL_DAYS, Store
 
 NOTHING_PENDING = "nothing to ask about."
+
+# The terminal's version of `EMPTY_QUEUE_NOTES`, in this surface's voice: one
+# lowercase line, keyed by the same `Store.empty_reason`. `over_cap` is
+# unreachable here — the terminal calls `next_probe` with no cap and can ask a
+# row of any width — so it is carried only so the lookup cannot raise.
+TERMINAL_EMPTY_NOTES = {
+    "never": (
+        f"{NOTHING_PENDING} grask writes probes from a session's transcript "
+        "after that session ends, so nothing is queued until one closes."
+    ),
+    "caught_up": f"{NOTHING_PENDING} you're caught up — more after your next session.",
+    "expired": (
+        f"{NOTHING_PENDING} what was queued went unasked for over "
+        f"{PROBE_TTL_DAYS} days and expired."
+    ),
+    "over_cap": NOTHING_PENDING,
+}
 
 # Claude's native question UI takes at most 4 options; rows over the cap are
 # left pending for the terminal path rather than consumed.
@@ -94,6 +111,32 @@ class TerminalConsole:
             return ""
 
 
+MORE_LATER = "More arrive after your next session ends."
+
+# One note per `Store.empty_reason`. An empty queue is the first thing a new
+# install shows and the most common thing a caught-up one shows, so each state
+# says which it is — "nothing pending" alone reads like a failure, and a single
+# shared line would misdescribe three of these four.
+EMPTY_QUEUE_NOTES = {
+    "never": (
+        "Nothing is queued. grask writes probes from a session's transcript "
+        "after that session ends, so a new install has nothing to ask until at "
+        "least one session has closed — empty by construction, not broken."
+    ),
+    "caught_up": f"You are caught up: every probe grask raised is answered. {MORE_LATER}",
+    "expired": (
+        f"Nothing is queued. The probes grask had raised went unasked for more "
+        f"than {PROBE_TTL_DAYS} days and expired — a probe about work you no "
+        f"longer remember is a quiz, not a check. {MORE_LATER}"
+    ),
+    "over_cap": (
+        f"Nothing this surface can ask. The probes still waiting carry more than "
+        f"{MAX_UI_OPTIONS} options, which is the native question UI's limit, so "
+        f"they are left for the terminal: run `grask` in a shell to answer them."
+    ),
+}
+
+
 def _serve(store_factory) -> int:
     """Print the next servable probe as JSON, blind: no key, no explanation.
 
@@ -101,12 +144,26 @@ def _serve(store_factory) -> int:
     matching Ctrl-C in the terminal path. The one write is the same one `ask`
     keeps: a row too broken to grade is recorded as an error so it stops
     blocking the queue, and the loop moves to the next row.
+
+    An empty queue carries `reason` and `note` because the first `/grask` of a
+    new install always lands here, and "nothing pending" alone reads like a
+    failure. `over_cap` in particular has to be distinguishable: the terminal
+    path can still ask those rows.
     """
     with store_factory() as store:
         while True:
             pending = store.next_probe(max_options=MAX_UI_OPTIONS)
             if pending is None:
-                print(json.dumps({"pending": None}))
+                reason = store.empty_reason(max_options=MAX_UI_OPTIONS)
+                print(
+                    json.dumps(
+                        {
+                            "pending": None,
+                            "reason": reason,
+                            "note": EMPTY_QUEUE_NOTES[reason],
+                        }
+                    )
+                )
                 return 0
             if _unservable(pending):
                 store.record_ask(resolution(pending, ERROR))
@@ -295,8 +352,9 @@ def main(
         pending = store.next_probe()
         if pending is None:
             # A command you typed that prints nothing looks broken. Silence is
-            # for the tools that push; this one was asked for.
-            print(NOTHING_PENDING)
+            # for the tools that push; this one was asked for — and one line for
+            # four different states would misdescribe three of them.
+            print(TERMINAL_EMPTY_NOTES[store.empty_reason()])
             return 0
 
         try:

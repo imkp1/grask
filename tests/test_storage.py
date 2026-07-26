@@ -507,6 +507,79 @@ class TestNextProbe:
         assert pending is not None and pending.probe_id == probe_id
 
 
+class TestEmptyReason:
+    """The four ways an empty queue can be empty, kept distinguishable."""
+
+    def stored(self, store: Store, *, session_id: str, created_at: str) -> int:
+        return TestNextProbe().stored(
+            store, session_id=session_id, created_at=created_at, topic="t"
+        )
+
+    def test_an_untouched_store_never_captured_anything(self, store: Store):
+        assert store.empty_reason() == "never"
+
+    def test_a_fully_answered_queue_is_caught_up(self, store: Store):
+        probe_id = self.stored(store, session_id="one", created_at=iso_days_ago(1))
+        store.record_ask(an_interrogation(probe_id=probe_id))
+
+        assert store.empty_reason() == "caught_up"
+
+    def test_an_unasked_stale_probe_is_expired(self, store: Store):
+        self.stored(store, session_id="one", created_at=iso_days_ago(PROBE_TTL_DAYS + 1))
+
+        assert store.empty_reason() == "expired"
+
+    def test_expiry_outranks_caught_up(self, store: Store):
+        """A queue holding both should report the one still costing the developer."""
+        answered = self.stored(store, session_id="one", created_at=iso_days_ago(1))
+        store.record_ask(an_interrogation(probe_id=answered))
+        self.stored(store, session_id="two", created_at=iso_days_ago(PROBE_TTL_DAYS + 1))
+
+        assert store.empty_reason() == "expired"
+
+    def test_an_over_cap_row_is_over_cap_not_caught_up(self, store: Store):
+        probe_id = self.stored(store, session_id="one", created_at=iso_days_ago(0))
+        store.conn.execute(
+            "UPDATE probes SET options = ? WHERE id = ?",
+            (json.dumps([f"option {n}" for n in range(5)]), probe_id),
+        )
+        store.conn.commit()
+
+        assert store.empty_reason(max_options=4) == "over_cap"
+
+    def test_over_cap_outranks_expiry(self, store: Store):
+        """It is the only reason with somewhere else to go: the terminal path."""
+        wide = self.stored(store, session_id="one", created_at=iso_days_ago(0))
+        store.conn.execute(
+            "UPDATE probes SET options = ? WHERE id = ?",
+            (json.dumps([f"option {n}" for n in range(5)]), wide),
+        )
+        store.conn.commit()
+        self.stored(store, session_id="two", created_at=iso_days_ago(PROBE_TTL_DAYS + 1))
+
+        assert store.empty_reason(max_options=4) == "over_cap"
+
+    def test_an_uncapped_caller_never_reports_over_cap(self, store: Store):
+        """No cap, no over-cap row — the terminal path can serve any width."""
+        probe_id = self.stored(store, session_id="one", created_at=iso_days_ago(0))
+        store.conn.execute(
+            "UPDATE probes SET options = ? WHERE id = ?",
+            (json.dumps([f"option {n}" for n in range(5)]), probe_id),
+        )
+        store.conn.commit()
+
+        assert store.empty_reason() == "caught_up"
+
+    def test_a_row_invisible_for_another_reason_counts_as_caught_up(self, store: Store):
+        """Options stored NULL: probes exist, so `never` would be the falser claim."""
+        probe_id = self.stored(store, session_id="one", created_at=iso_days_ago(1))
+        store.conn.execute("UPDATE probes SET options = NULL WHERE id = ?", (probe_id,))
+        store.conn.commit()
+
+        assert store.next_probe() is None
+        assert store.empty_reason() == "caught_up"
+
+
 class TestRecordAsk:
     def a_probe_id(self, store: Store) -> int:
         store.record_session(

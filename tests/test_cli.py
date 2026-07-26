@@ -10,11 +10,14 @@ the question on a stray keypress.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import get_args
+
+import pytest
 
 from grask.ask import Interrogation, PendingProbe
-from grask.cli import main
+from grask.cli import EMPTY_QUEUE_NOTES, TERMINAL_EMPTY_NOTES, main
 from grask.probe import Rubric
-from grask.storage import Store
+from grask.storage import EmptyReason, Store
 
 RUBRIC = Rubric(
     topic="idempotency of the retry path",
@@ -33,8 +36,9 @@ PENDING = PendingProbe(
 
 
 class FakeStore:
-    def __init__(self, pending: PendingProbe | None) -> None:
+    def __init__(self, pending: PendingProbe | None, reason: str = "never") -> None:
         self.pending = pending
+        self.reason = reason
         self.recorded: list[Interrogation] = []
 
     def __enter__(self):
@@ -45,6 +49,9 @@ class FakeStore:
 
     def next_probe(self):
         return self.pending
+
+    def empty_reason(self, **kwargs):
+        return self.reason
 
     def record_ask(self, interrogation):
         self.recorded.append(interrogation)
@@ -70,6 +77,25 @@ def test_no_pending_probe_says_so_and_exits_zero(capsys):
     assert code == 0
     assert capsys.readouterr().out.strip() != ""
     assert store.recorded == []
+
+
+@pytest.mark.parametrize("reason", sorted(TERMINAL_EMPTY_NOTES))
+def test_an_empty_queue_prints_the_note_for_its_reason(reason: str, capsys):
+    """Each state gets its own line: "caught up" and "never captured" are not
+    the same news, and a developer reading one when the other is true goes
+    looking for a bug in the capture hook."""
+    store = FakeStore(None, reason=reason)
+
+    code = main([], store_factory=lambda: store, ask=lambda *a, **k: an_interrogation())
+
+    assert code == 0
+    assert capsys.readouterr().out.strip() == TERMINAL_EMPTY_NOTES[reason]
+
+
+def test_the_terminal_notes_cover_every_empty_reason():
+    """A reason with no note would be a KeyError on an empty queue."""
+    assert set(TERMINAL_EMPTY_NOTES) == set(get_args(EmptyReason))
+    assert set(EMPTY_QUEUE_NOTES) == set(get_args(EmptyReason))
 
 
 def test_records_the_interrogation(capsys):

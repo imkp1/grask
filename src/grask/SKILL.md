@@ -21,26 +21,42 @@ relay the answer. You never grade, never guess, and never see the answer key.
 ## Running grask
 
 Do not assume a bare `grask` is on PATH — the plugin install deliberately does
-not put one there. Every `grask` call below goes through this resolver, which
-prefers the shim the plugin's SessionStart hook writes and falls back to a
-PATH `grask` for the standalone install:
+not put one there. Call the shim the SessionStart hook writes, by its literal
+path:
 
 ```
-GRASK="${GRASK_HOME:-$HOME/.claude/grask}/grask"; [ -x "$GRASK" ] || GRASK=grask
+~/.claude/grask/grask
 ```
 
-Prepend that to each command, so every call is self-contained (a new shell each
-time). Where a step below writes `grask …`, run `"$GRASK" …`.
+Keep it literal. A command carrying `${...}` cannot be matched against the
+harness's permission rules, so it prompts for approval on every single call —
+which, on a first `/grask`, is an opaque shell one-liner shoved in front of
+someone who has not seen a probe yet.
+
+Only if that path does not exist or will not run — a standalone install, or a
+`GRASK_HOME` pointing elsewhere — fall back to the resolver, once:
+
+```
+GRASK="${GRASK_HOME:-$HOME/.claude/grask}/grask"; [ -x "$GRASK" ] || GRASK=grask; "$GRASK" <args>
+```
+
+Where a step below writes `grask …`, run `~/.claude/grask/grask …`, or the
+resolved `"$GRASK" …` if you had to fall back.
 
 ## Flow
 
 1. Run:
 
    ```
-   GRASK="${GRASK_HOME:-$HOME/.claude/grask}/grask"; [ -x "$GRASK" ] || GRASK=grask; "$GRASK" serve --json
+   ~/.claude/grask/grask serve --json
    ```
 
-   If the output is `{"pending": null}`, say there is nothing pending and stop.
+   If `pending` is null, the queue is empty: relay the `note` field from that
+   same JSON and stop. Do not shorten it to "nothing pending" and do not
+   generalise across the `reason` codes — `note` already says *why* it is empty,
+   and the four reasons (`never`, `caught_up`, `expired`, `over_cap`) mean
+   different things. `over_cap` especially: those probes are still waiting, they
+   just do not fit this UI, so the note sends the developer to the terminal.
    If `grask` cannot be found or run either way, grask is not installed here —
    say so and stop rather than hunting for a checkout to `cd` into.
 
@@ -72,11 +88,11 @@ time). Where a step below writes `grask …`, run `"$GRASK" …`.
      note: "Other" accepts `skip`, or `wrong: <what's off>` if the question
      misreads what happened.
 
-3. Record the result (through the same `$GRASK` resolver as step 1):
-   - Picked letter L: `"$GRASK" record <probe_id> --pick L`
-   - Skipped: `"$GRASK" record <probe_id> --skip`
-   - Premise rejected: `"$GRASK" record <probe_id> --wrong --objection
-     "<their words>"` (omit `--objection` if they gave no reason).
+3. Record the result (through whichever path worked in step 1):
+   - Picked letter L: `~/.claude/grask/grask record <probe_id> --pick L`
+   - Skipped: `~/.claude/grask/grask record <probe_id> --skip`
+   - Premise rejected: `~/.claude/grask/grask record <probe_id> --wrong
+     --objection "<their words>"` (omit `--objection` if they gave no reason).
 
    Show the result: ✓ or ✗ from `outcome`, then the `explanation` verbatim,
    then the withheld provenance — `This came up from: <topic>` — now that the

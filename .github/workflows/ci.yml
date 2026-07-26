@@ -84,7 +84,10 @@ jobs:
           GRASK_HOME: ${{ runner.temp }}/grask-home
         run: |
           grask --help
-          test "$(grask serve --json)" = '{"pending": null}'
+          # A GRASK_HOME this run just created has never captured anything, and
+          # an empty queue has to say which of the four kinds of empty it is.
+          grask serve --json | grep -q '"pending": null'
+          grask serve --json | grep -q '"reason": "never"'
           # The hook takes its payload on stdin and must exit 0 on anything,
           # including a payload it cannot use. It never has a --help to call.
           echo '{}' | grask-hook

@@ -6,6 +6,24 @@ SQLite schema under `GRASK_HOME` carries no migration guarantee yet.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/) once there is a 1.0 to be compatible with.
 
+## 0.1.0-rc4
+
+- **An empty queue now says which kind of empty it is.** `serve` returned a bare
+  `{"pending": null}` and the terminal printed a bare `nothing to ask about.`, which reads
+  like a broken tool on the first `/grask` of a fresh install. Both surfaces now report one
+  of four states from the new `Store.empty_reason`: `never` (nothing captured yet, because
+  probes are written after a session ends), `caught_up`, `expired` (probes went unasked past
+  the 7-day TTL), and `over_cap`. `over_cap` is the one that was actively misleading: `serve`
+  caps options at the native question UI's limit of 4, so a wider probe was reported as an
+  empty queue while a bare `grask` in a terminal could still ask it.
+- **The `/grask` skill calls its shim by literal path.** The skill opened with
+  `GRASK="${GRASK_HOME:-$HOME/.claude/grask}/grask"`, and a command carrying `${...}` cannot
+  be matched against Claude Code's permission rules, so every single call prompted for
+  approval. A first-time user's first sight of grask was an opaque shell one-liner asking to
+  be approved, before any probe. The happy path is now `~/.claude/grask/grask`, with the
+  resolver kept as a documented fallback for standalone installs and `GRASK_HOME` overrides.
+  The README also lists the two `allow` entries that approve `serve` and `record` for good.
+
 ## 0.1.0-rc3
 
 - **Fix: the first `/grask` question call failed.** The skill described options as `label` +
