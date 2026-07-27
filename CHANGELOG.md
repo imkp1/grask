@@ -6,6 +6,35 @@ SQLite schema under `GRASK_HOME` carries no migration guarantee yet.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/) once there is a 1.0 to be compatible with.
 
+## Unreleased
+
+- **The result of a pick is rendered in one place, and it names the answer.** The verdict was
+  a bare `✓`/`✗` glyph and nothing ever said which option was correct — after a wrong pick you
+  were left mapping an explanation back onto a picker that had already closed. Worse, each
+  surface composed its own result from loose fields, so they drifted: the terminal printed a
+  verdict and an explanation on one line while the `/grask` skill put a naked `✗` on a line by
+  itself, which reads as saying nothing at all. Both now print `ask.result_block` and nothing
+  else — `record` returns it as `display`, and the skill's job is to relay that string. The
+  verdict is a word (`Correct` / `Incorrect`, never a score), a wrong pick is shown the correct
+  option in full, and a skip gets the answer and the explanation too, since skipping is usually
+  "I don't know" and the probe is spent either way. A rejected premise still gets neither:
+  answering a disputed question with its own key argues past the objection.
+- **`record`'s JSON is now `{outcome, display}`.** `explanation` is gone from the payload — it
+  is inside `display`, and a second copy is a second thing that can disagree. `serve` is
+  unchanged and still blind: the key appears nowhere until the row is written and
+  `UNIQUE(probe_id)` has refused a second answer.
+
+- **The plugin now approves its own two commands.** Spelling the shim literally was
+  necessary but not sufficient: with permissions on, a literal command still prompts unless
+  something has allowed it, so one probe cost two or three approval taps — `serve`, `record`,
+  `serve` again — and rc4's fix was invisible to anyone who had not hand-edited
+  `settings.json`. A plugin cannot ship permission rules, so grask ships a `PreToolUse` hook
+  (`grask.approve`) instead, which is narrower than an allowlist glob: it parses the argv and
+  approves only `serve` and `record` with the flags those two subcommands take, refuses any
+  shell metacharacter that could join a second command, and stays silent — falling through to
+  the normal prompt — for everything else it sees. The manual `allow` entries in the README
+  are now only for standalone `pip install` users, who have no plugin hooks.
+
 ## 0.1.0-rc4
 
 - **An empty queue now says which kind of empty it is.** `serve` returned a bare

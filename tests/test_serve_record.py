@@ -209,10 +209,13 @@ class TestRecord:
         code = run(db, ["record", str(probe_id), "--pick", "a"])
 
         assert code == 0
-        assert json.loads(capsys.readouterr().out) == {
-            "outcome": "passed",
-            "explanation": a_probe().explanation,
-        }
+        out = json.loads(capsys.readouterr().out)
+        # Two fields and no third: `explanation` is inside `display` now, and a
+        # second copy is a second thing that can disagree with the first.
+        assert set(out) == {"outcome", "display"}
+        assert out["outcome"] == "passed"
+        assert "\u2713 Correct" in out["display"]
+        assert a_probe().explanation in out["display"]
         rows = asks_rows(db)
         assert len(rows) == 1
         assert rows[0]["outcome"] == "passed"
@@ -235,10 +238,14 @@ class TestRecord:
         code = run(db, ["record", str(probe_id), "--pick", "b"])
 
         assert code == 0
-        assert json.loads(capsys.readouterr().out) == {
-            "outcome": "failed",
-            "explanation": a_probe().explanation,
-        }
+        out = json.loads(capsys.readouterr().out)
+        assert out["outcome"] == "failed"
+        # The whole point of the change: a wrong pick is told which option was
+        # right, in full, so the explanation does not have to be mapped back
+        # onto a picker that is already gone.
+        assert "\u2717 Incorrect" in out["display"]
+        assert a_probe().options[0] in out["display"]
+        assert a_probe().options[1] in out["display"]
         with Store(db) as store:
             answers = store.conn.execute("SELECT answer FROM answers").fetchall()
         assert [row["answer"] for row in answers] == [a_probe().options[1]]
@@ -249,7 +256,15 @@ class TestRecord:
         code = run(db, ["record", str(probe_id), "--skip"])
 
         assert code == 0
-        assert json.loads(capsys.readouterr().out) == {"outcome": "skipped"}
+        out = json.loads(capsys.readouterr().out)
+        assert out["outcome"] == "skipped"
+        # A skip is usually "I don't know", which is when the payoff is worth
+        # most, and the probe is spent either way — so it still gets the answer
+        # and the explanation, just no verdict word.
+        assert "Skipped" in out["display"]
+        assert a_probe().options[0] in out["display"]
+        assert a_probe().explanation in out["display"]
+        assert "Incorrect" not in out["display"]
         assert asks_rows(db)[0]["confidence"] is None
 
     def test_wrong_records_premise_rejected_with_the_objection(self, db: Path, capsys):
@@ -261,7 +276,12 @@ class TestRecord:
         )
 
         assert code == 0
-        assert json.loads(capsys.readouterr().out) == {"outcome": "premise_rejected"}
+        out = json.loads(capsys.readouterr().out)
+        assert out["outcome"] == "premise_rejected"
+        # Disputing the question is not answering it: no key, no explanation.
+        # Handing back the answer key would argue past the objection.
+        assert a_probe().options[0] not in out["display"]
+        assert a_probe().explanation not in out["display"]
         assert asks_rows(db)[0]["objection"] == "that was the agent"
 
     def test_wrong_without_an_objection(self, db: Path, capsys):

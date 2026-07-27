@@ -175,6 +175,96 @@ def grade(pending: PendingProbe, pick: str) -> Interrogation:
     )
 
 
+PLAIN = "plain"
+MARKDOWN = "markdown"
+
+# What each outcome calls itself. `skipped` gets no verdict word: it is not a
+# wrong answer, and design.md's rule that one probe cannot identify
+# understanding cuts both ways — nothing here may read as a score.
+VERDICTS = {
+    PASSED: "✓ Correct",
+    FAILED: "✗ Incorrect",
+    SKIPPED: "— Skipped",
+    PREMISE_REJECTED: "— Premise rejected",
+    ERROR: "— Unusable probe",
+}
+
+
+def _picked_idx(pending: PendingProbe, graded: Interrogation) -> int | None:
+    """Which option was chosen, recovered from the stored turn.
+
+    The turn holds the option *text*, because that is what a stored row has to
+    survive a reshuffle. Two options with identical text would resolve to the
+    first, which renders the same string either way.
+    """
+    if not graded.turns:
+        return None
+    try:
+        return pending.options.index(graded.turns[0].answer)
+    except ValueError:
+        return None
+
+
+def result_block(pending: PendingProbe, graded: Interrogation, *, style: str = PLAIN) -> str:
+    """The whole of what a developer sees after a pick, for every surface.
+
+    The one renderer. A surface that composed its own would drift from this one
+    the first time either was edited — which is exactly how the `/grask` skill
+    ended up printing a bare `✗` on a line by itself while the terminal printed
+    a verdict and an explanation together.
+
+    The two styles differ only where the surrounding surface differs:
+
+    - **topic**: the terminal already printed it above the question, in
+      `context_line`. The skill deliberately withholds it until the answer is
+      settled, so only `markdown` carries it here.
+    - **the pick**: the terminal still has the options on screen, so naming the
+      letter is enough. The skill's picker is gone by now, so `markdown` spells
+      both options out in full.
+
+    Everything else — the order, the wording, which outcome says what — is
+    shared, which is the point.
+    """
+    md = style == MARKDOWN
+    verdict = VERDICTS.get(graded.outcome, VERDICTS[ERROR])
+    correct = pending.correct_idx
+    picked = _picked_idx(pending, graded)
+
+    # A disputed premise gets no key: the developer's claim is that the question
+    # is wrong, and answering it with its own answer key argues past them.
+    if graded.outcome in (PREMISE_REJECTED, ERROR) or correct is None:
+        return f"**{verdict}**" if md else verdict
+
+    def option(idx: int) -> str:
+        return f"{LETTERS[idx]}) {pending.options[idx]}"
+
+    lines = [f"**{verdict}**" if md else verdict]
+    if md:
+        if graded.outcome == FAILED and picked is not None:
+            lines += [
+                "",
+                f"- **You picked** — {option(picked)}",
+                f"- **Correct** — {option(correct)}",
+            ]
+        elif graded.outcome == SKIPPED:
+            lines += ["", f"- **Answer** — {option(correct)}"]
+    else:
+        if graded.outcome == FAILED and picked is not None:
+            lines[0] = (
+                f"{verdict} · you picked {LETTERS[picked]}, "
+                f"the answer was {LETTERS[correct]}"
+            )
+            lines += ["", f"  {option(correct)}"]
+        elif graded.outcome == SKIPPED:
+            lines[0] = f"{verdict} · the answer was {LETTERS[correct]}"
+            lines += ["", f"  {option(correct)}"]
+
+    lines += ["", pending.explanation]
+    if md:
+        lines += ["", f"*This came up from: {pending.rubric.topic}*"]
+    return "\n".join(lines)
+
+
 def ask(pending: PendingProbe, console: Console) -> Interrogation:
     """Run one probe to a verdict: pick, mechanical grade."""
 
@@ -184,12 +274,16 @@ def ask(pending: PendingProbe, console: Console) -> Interrogation:
         objection: str | None = None,
         turns: tuple[AnswerTurn, ...] = (),
     ) -> Interrogation:
-        return resolution(
-            pending,
-            outcome,
-            objection=objection,
-            turns=turns,
-        )
+        """Resolve, and show the developer how it ended.
+
+        Every exit from the loop below renders — a skip included. Skipping is
+        usually "I don't know", which is precisely when the explanation is worth
+        most, and the probe is spent either way: `UNIQUE(probe_id)` means it will
+        not be asked again, so withholding the payoff only loses it.
+        """
+        graded = resolution(pending, outcome, objection=objection, turns=turns)
+        console.show(result_block(pending, graded))
+        return graded
 
     def ask_objection() -> str | None:
         """Shared `/wrong` handling: prompt once for an optional reason.
@@ -201,8 +295,10 @@ def ask(pending: PendingProbe, console: Console) -> Interrogation:
         return typed or None
 
     if _unservable(pending):
+        # Renders its own line: `result_block` cannot speak for a row whose
+        # options or key it just refused to trust.
         console.show(MALFORMED)
-        return done(ERROR)
+        return resolution(pending, ERROR)
 
     console.show(context_line(pending))
     console.show(pending.question)
@@ -220,5 +316,5 @@ def ask(pending: PendingProbe, console: Console) -> Interrogation:
         console.show(pick_hint(len(pending.options)))
 
     graded = grade(pending, typed)
-    console.show(f"{'✓' if graded.outcome == PASSED else '✗'} {pending.explanation}")
+    console.show(result_block(pending, graded))
     return graded

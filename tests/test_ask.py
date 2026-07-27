@@ -16,13 +16,17 @@ import pytest
 from grask.ask import (
     ERROR,
     FAILED,
+    MARKDOWN,
     PASSED,
+    PLAIN,
     PREMISE_REJECTED,
     SKIPPED,
     AnswerTurn,
     PendingProbe,
     ask,
     grade,
+    resolution,
+    result_block,
 )
 from grask.probe import Rubric
 
@@ -145,6 +149,17 @@ class TestSkip:
         assert result.confidence is None
         assert result.turns == ()
 
+    def test_skipping_still_shows_the_answer(self):
+        """Skipping used to print nothing at all. It is usually "I don't know",
+        and `UNIQUE(probe_id)` means the probe will not come back, so silence
+        just threw the payoff away."""
+        console = ScriptedConsole([""])
+
+        ask(PENDING, console)
+
+        assert any(PENDING.explanation in text for text in console.shown)
+        assert any(PENDING.options[1] in text for text in console.shown)
+
 
 class TestWrong:
     def test_wrong_with_an_objection(self):
@@ -227,3 +242,91 @@ class TestGrade:
     def test_a_multi_character_pick_is_rejected(self):
         with pytest.raises(ValueError):
             grade(PENDING, "ab")
+
+
+class TestResultBlock:
+    """The one renderer. Both surfaces print what this returns and nothing else,
+    which is the property that stops them drifting apart — the `/grask` skill
+    once printed a bare `\u2717` on a line of its own while the terminal printed a
+    verdict and an explanation together."""
+
+    def block(self, pick: str, style: str) -> str:
+        return result_block(PENDING, grade(PENDING, pick), style=style)
+
+    @pytest.mark.parametrize("style", [PLAIN, MARKDOWN])
+    def test_a_pass_says_correct_in_words(self, style):
+        """A glyph alone can be missed entirely; that is the whole complaint."""
+        block = self.block("b", style)
+
+        assert "Correct" in block
+        assert "\u2713" in block
+        assert PENDING.explanation in block
+
+    @pytest.mark.parametrize("style", [PLAIN, MARKDOWN])
+    def test_a_pass_does_not_echo_the_pick(self, style):
+        """You got it right. Repeating the option back is noise."""
+        block = self.block("b", style)
+
+        assert "You picked" not in block
+
+    @pytest.mark.parametrize("style", [PLAIN, MARKDOWN])
+    def test_a_fail_names_the_correct_letter(self, style):
+        block = self.block("a", style)
+
+        assert "Incorrect" in block
+        assert "\u2717" in block
+        assert "b)" in block
+        assert PENDING.explanation in block
+
+    def test_a_fail_spells_both_options_out_in_markdown(self):
+        """The picker is gone by the time this renders, so the letters alone
+        would be unreadable."""
+        block = self.block("a", MARKDOWN)
+
+        assert PENDING.options[0] in block
+        assert PENDING.options[1] in block
+
+    def test_a_fail_names_letters_only_for_the_pick_in_plain(self):
+        """The terminal still has the options on screen above the prompt, so the
+        wrong option is named by letter and not reprinted in full."""
+        block = self.block("a", PLAIN)
+
+        assert "you picked a" in block
+        assert PENDING.options[0] not in block
+        assert PENDING.options[1] in block
+
+    @pytest.mark.parametrize("style", [PLAIN, MARKDOWN])
+    def test_a_skip_gets_the_answer_but_no_verdict(self, style):
+        block = result_block(PENDING, resolution(PENDING, SKIPPED), style=style)
+
+        assert "Skipped" in block
+        assert PENDING.options[1] in block
+        assert PENDING.explanation in block
+        assert "Incorrect" not in block and "Correct" not in block
+
+    @pytest.mark.parametrize("style", [PLAIN, MARKDOWN])
+    def test_a_rejected_premise_gets_no_key_and_no_explanation(self, style):
+        """They said the question is wrong. Answering with its own answer key
+        argues past them."""
+        block = result_block(PENDING, resolution(PENDING, PREMISE_REJECTED), style=style)
+
+        assert "Premise rejected" in block
+        assert PENDING.options[1] not in block
+        assert PENDING.explanation not in block
+
+    def test_only_markdown_carries_the_topic(self):
+        """The terminal printed it above the question already (`context_line`);
+        the skill withheld it until the answer was settled."""
+        assert PENDING.rubric.topic in self.block("a", MARKDOWN)
+        assert PENDING.rubric.topic not in self.block("a", PLAIN)
+
+    @pytest.mark.parametrize("style", [PLAIN, MARKDOWN])
+    def test_a_row_with_no_key_says_nothing_it_cannot_support(self, style):
+        """`_unservable` normally catches these first. If one reaches here, the
+        verdict line is all it may claim."""
+        broken = replace(PENDING, correct_idx=None)
+
+        block = result_block(broken, resolution(broken, FAILED), style=style)
+
+        assert PENDING.explanation not in block
+        assert PENDING.options[1] not in block
