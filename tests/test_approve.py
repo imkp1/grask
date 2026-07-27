@@ -53,6 +53,13 @@ def test_approves_what_the_skill_actually_runs(command):
         f"{SHIM} record 12 --objection",  # flag left without its value
         f"{SHIM}",  # no subcommand
         "python3 -m grask.cli serve",  # the shim is the only approved entry
+        # `record` takes exactly one positional and it is a probe id. The skill
+        # never sends anything else, so nothing else gets the developer's
+        # standing approval — an approval rule that merely resembles the shape
+        # it approves is the one kind of looseness that costs something.
+        f"{SHIM} record",  # the probe id is not optional
+        f"{SHIM} record 12 13 --skip",  # one id, not several
+        f"{SHIM} record ../../etc/passwd --skip",  # ids are digits
     ],
 )
 def test_refuses_everything_else(command):

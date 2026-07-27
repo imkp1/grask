@@ -117,7 +117,7 @@ def pick_hint(count: int) -> str:
     return f"type a single letter, a-{LETTERS[count - 1]}."
 
 
-def _unservable(pending: PendingProbe) -> bool:
+def unservable(pending: PendingProbe) -> bool:
     """A row the ask cannot honestly grade.
 
     Storage already filters `options IS NULL`, so what arrives here failed to
@@ -161,7 +161,7 @@ def grade(pending: PendingProbe, pick: str) -> Interrogation:
 
     The one place a pick becomes a verdict; `ask` and `grask record` both land
     here. Raises ValueError rather than guessing on bad input — the caller
-    decides how to surface it. Never call this on a row `_unservable` flags.
+    decides how to surface it. Never call this on a row `unservable` flags.
     """
     valid = LETTERS[: len(pending.options)]
     letter = pick.strip().lower()
@@ -294,7 +294,7 @@ def ask(pending: PendingProbe, console: Console) -> Interrogation:
         typed = console.prompt(OBJECTION_PROMPT).strip()
         return typed or None
 
-    if _unservable(pending):
+    if unservable(pending):
         # Renders its own line: `result_block` cannot speak for a row whose
         # options or key it just refused to trust.
         console.show(MALFORMED)

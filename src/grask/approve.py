@@ -39,6 +39,11 @@ ALLOWED = {
     "record": {"--pick": True, "--skip": False, "--wrong": False, "--objection": True},
 }
 
+# How many positional arguments each subcommand must have. `record` names the
+# probe it is answering; `serve` names nothing. Exact, not a maximum: a bare
+# `record` is a usage error, not something to pre-approve.
+REQUIRED_POSITIONALS = {"serve": 0, "record": 1}
+
 
 def _shim_path() -> str:
     home = os.environ.get("GRASK_HOME")
@@ -73,6 +78,7 @@ def is_grask_command(command: str) -> bool:
         return False
 
     expecting_value = False
+    positionals = 0
     for token in rest:
         if expecting_value:
             expecting_value = False
@@ -81,10 +87,15 @@ def is_grask_command(command: str) -> bool:
             if token not in flags:
                 return False
             expecting_value = flags[token]
-        elif subcommand != "record":
-            # Only `record` takes a positional, and only one: the probe id.
-            return False
-    return not expecting_value
+        else:
+            # Only `record` takes a positional, and only one: the probe id. An
+            # approval is the one place a loose check costs something, so this
+            # matches the shape the skill runs rather than merely resembling it —
+            # `record 1 2 3` and `record ../whatever` used to pass here.
+            if subcommand != "record" or positionals or not token.isdigit():
+                return False
+            positionals += 1
+    return not expecting_value and positionals == REQUIRED_POSITIONALS[subcommand]
 
 
 def decide(payload: dict[str, object]) -> dict[str, object] | None:

@@ -177,12 +177,18 @@ def test_shim_writes_the_runner_shim(tmp_path: Path, capsys):
     (GRASK_HOME, redirected to tmp_path by conftest) that re-enters grask through
     the given plugin root."""
     code = main(["shim", "--root", str(tmp_path / "plugin-root")])
-    capsys.readouterr()
+    captured = capsys.readouterr()
 
     shim = tmp_path / "grask"
     assert code == 0
     assert shim.is_file()
     assert str(tmp_path / "plugin-root") in shim.read_text(encoding="utf-8")
+    # A SessionStart hook's stdout is injected into the session's context and
+    # shown to the developer. A success line here would be a notification about
+    # plumbing in every session forever, charged to work that has nothing to do
+    # with grask. Only the failure has anything to say, and it says it on stderr.
+    assert captured.out == ""
+    assert captured.err == ""
 
 
 def test_shim_never_fails_a_session_open(tmp_path: Path, capsys, monkeypatch):

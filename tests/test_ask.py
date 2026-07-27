@@ -322,7 +322,7 @@ class TestResultBlock:
 
     @pytest.mark.parametrize("style", [PLAIN, MARKDOWN])
     def test_a_row_with_no_key_says_nothing_it_cannot_support(self, style):
-        """`_unservable` normally catches these first. If one reaches here, the
+        """`unservable` normally catches these first. If one reaches here, the
         verdict line is all it may claim."""
         broken = replace(PENDING, correct_idx=None)
 

@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 
 from grask.llm import Completion, LLMError, complete, extract_json_array
 from grask.select import select
-from grask.transcript import Session, Turn
+from grask.transcript import Session, Turn, normalize
 
 # One pasted stack trace should not crowd out fifteen short turns. Generous
 # enough that ordinary prose is never cut.
@@ -179,10 +179,6 @@ class TriageVerdict:
         return self.verdict == "ask"
 
 
-def _normalize(text: str) -> str:
-    return " ".join(text.split()).lower()
-
-
 def render_session(session: Session) -> str:
     """The session as stage 1 sees it: what was typed, and what was touched."""
     lines: list[str] = []
@@ -266,7 +262,7 @@ def parse_moments(session: Session, completion: Completion) -> tuple[list[Moment
         if signal not in VALID_SIGNALS:
             rejected.append(f"{label}: unrecognized signal {signal!r}")
             continue
-        if quote is None or _normalize(quote) not in _normalize(by_index[turn_index].text):
+        if quote is None or normalize(quote) not in normalize(by_index[turn_index].text):
             rejected.append(f"{label}: quote not found in that turn")
             continue
         if signal == "asked_why" and not Turn(text=quote, timestamp=None, index=0).is_question:

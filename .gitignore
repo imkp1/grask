@@ -1,3 +1,9 @@
+# Editor and OS scratch. Named because each has already appeared untracked in a
+# working tree that was about to be released.
+.DS_Store
+.idea/
+brag-output/
+
 # Python
 __pycache__/
 *.py[cod]
