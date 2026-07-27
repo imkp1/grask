@@ -6,7 +6,7 @@ SQLite schema under `GRASK_HOME` carries no migration guarantee yet.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/) once there is a 1.0 to be compatible with.
 
-## Unreleased
+## 0.1.0-rc5
 
 - **The result of a pick is rendered in one place, and it names the answer.** The verdict was
   a bare `✓`/`✗` glyph and nothing ever said which option was correct — after a wrong pick you
