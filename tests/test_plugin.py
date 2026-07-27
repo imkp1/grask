@@ -57,3 +57,16 @@ def test_hooks_register_capture_on_session_end():
 
     # The whole point of this layer: nothing here depends on uv any more.
     assert not any("uv " in c or "uv\t" in c for c in end + start)
+
+
+def test_hooks_register_the_permission_hook_for_bash_only():
+    """Without this group, `/grask` costs two or three approval taps per probe.
+    Scoped to Bash: the hook has no opinion about any other tool, and a matcher
+    that let it see them all would be a wider ear than it needs."""
+    hooks = json.loads((REPO / "hooks" / "hooks.json").read_text("utf-8"))["hooks"]
+    groups = hooks.get("PreToolUse", [])
+    assert groups, "the PreToolUse hook must not be dropped: it is the whole fix"
+    for group in groups:
+        assert group["matcher"] == "Bash"
+    commands = [h["command"] for group in groups for h in group["hooks"]]
+    assert any("grask.approve" in c and "CLAUDE_PLUGIN_ROOT" in c for c in commands)

@@ -22,15 +22,15 @@ from pathlib import Path
 
 from grask.ask import (
     ERROR,
-    FAILED,
     LETTERS,
-    PASSED,
+    MARKDOWN,
     PREMISE_REJECTED,
     SKIPPED,
     Console,
     _unservable,
     grade,
     resolution,
+    result_block,
 )
 from grask.ask import (
     ask as _ask,
@@ -247,10 +247,20 @@ def _record(args: argparse.Namespace, parser: argparse.ArgumentParser, store_fac
             # refusal, not an overwrite.
             return _fail(f"probe {args.probe_id} was already answered")
 
-    out: dict[str, object] = {"outcome": interrogation.outcome}
-    if interrogation.outcome in (PASSED, FAILED):
-        out["explanation"] = pending.explanation
-    print(json.dumps(out))
+    # Two fields, and only one of them is for reading. `display` is the whole
+    # result, rendered here rather than composed by the model: a surface handed
+    # loose parts formats them differently every time it is edited, which is how
+    # the skill once printed a bare `✗` on a line of its own. `explanation` is
+    # not returned alongside it — a second copy is a second thing that can
+    # disagree with the first.
+    print(
+        json.dumps(
+            {
+                "outcome": interrogation.outcome,
+                "display": result_block(pending, interrogation, style=MARKDOWN),
+            }
+        )
+    )
     return 0
 
 

@@ -342,7 +342,8 @@ transcript ──▶ moments ──▶ selected moment ──▶ hypothesis ─�
                                                           pick == correct_idx
                                                                        │
                                                                        ▼
-                                                            ✓ / ✗ + explanation
+                                                       result_block: verdict + key
+                                                            + explanation
 ```
 
 Everything above `stored` runs detached with nobody watching. Everything below runs with no
@@ -449,6 +450,43 @@ This is aiming, not teaching. Lesson authoring stays cut: *"any chat window expl
 idempotency in fifteen seconds. The scarce thing is knowing it's your problem, with
 receipts."* The payoff is knowing which fifteen seconds are yours.
 
+### One renderer, two styles
+
+Everything a developer sees after a pick comes out of `ask.result_block`. The terminal
+prints it; `record` returns it as `display` and the `/grask` skill prints that verbatim.
+No surface composes a result from parts.
+
+This is not tidiness. Two surfaces rendering one design from loose fields drift the first
+time either is edited, and they did: the terminal printed a verdict and an explanation on
+one line while the skill put a bare `✗` on a line of its own, which the developer read as
+saying nothing about whether they were right. The model is a delivery surface for the
+result exactly as it is for the question — it relays a string it cannot restructure.
+
+The two styles differ only where the surrounding surface differs. The terminal already
+printed the topic above the question and still has the options on screen, so `plain` omits
+the topic and names the wrong pick by letter alone. The skill withheld the topic until the
+answer was settled and its picker is gone, so `markdown` carries the topic and spells both
+options out in full. Order, wording, and which outcome says what are shared.
+
+**The verdict is a word, not only a glyph**, and it says nothing beyond what a pick can
+support: `Correct` and `Incorrect` describe one pick against one key. Nothing here is a
+score, and the rule above — one probe cannot identify understanding — is why there is no
+streak, no total, and no adjective.
+
+**A wrong pick is told which option was right, in full.** The explanation states the
+mechanism without naming a letter, which leaves the developer mapping prose back onto a
+picker that has already closed. Revealing the key here is safe in a way it never is in
+`serve`: the row is written, `UNIQUE(probe_id)` refuses a second answer, and the question
+is over.
+
+**Skipping shows the answer too, with no verdict.** A skip is usually "I don't know" —
+precisely when the payoff is worth most — and the probe is spent either way. `skipped`
+stays its own stored outcome; it is not a wrong answer.
+
+**A rejected premise gets neither.** The developer's claim is that the question is wrong.
+Answering it with its own answer key argues past them, so the block is the outcome line and
+nothing else.
+
 ### What the developer sees
 
 ```
@@ -464,9 +502,24 @@ jitter matter more as the number of clients grows?
 
 pick   [a-d]   ·   enter = skip   ·   /wrong
 > b
-✓ Backoff decides how long each client waits. It does nothing about them all waiting
+✓ Correct
+
+Backoff decides how long each client waits. It does nothing about them all waiting
 the same amount. Clients dropped by one outage come back in lockstep, so the recovering
 service takes the same thundering herd on every cycle. Jitter decorrelates the schedules.
+```
+
+Had they picked `a`, the same block names what they missed — by letter, since the options
+are still on screen a few lines up:
+
+```
+> a
+✗ Incorrect · you picked a, the answer was b
+
+  b) Clients knocked out together retry together; jitter spreads them back out.
+
+Backoff decides how long each client waits. It does nothing about them all waiting
+the same amount. …
 ```
 
 The context line is one line and mandatory. Without it the developer reads a question about

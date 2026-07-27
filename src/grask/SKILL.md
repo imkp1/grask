@@ -14,8 +14,9 @@ relay the answer. You never grade, never guess, and never see the answer key.
 - Never open or query grask's database directly. The two subcommands below are
   the entire interface.
 - Never speculate about which option is correct — not in text, not in labels,
-  not in previews, not before or after the pick. Grading happens in
-  `grask record`.
+  not in previews, not before the pick and not after it. Grading happens in
+  `grask record`, and the only true thing you ever learn about the key is the
+  `display` string it hands back. Relay that; never reason past it.
 - One native question, one round. No confidence round, no follow-ups.
 
 ## Running grask
@@ -28,10 +29,12 @@ path:
 ~/.claude/grask/grask
 ```
 
-Keep it literal. A command carrying `${...}` cannot be matched against the
-harness's permission rules, so it prompts for approval on every single call —
-which, on a first `/grask`, is an opaque shell one-liner shoved in front of
-someone who has not seen a probe yet.
+Keep it literal, and keep the arguments to the shapes below. grask ships a
+`PreToolUse` hook that pre-approves exactly `serve` and `record` spelled this
+way; anything else — a `${...}` expansion, an extra flag, a second command
+joined on — falls through to a permission prompt, on every single call. On a
+first `/grask` that is an opaque shell one-liner shoved in front of someone who
+has not seen a probe yet.
 
 Only if that path does not exist or will not run — a standalone install, or a
 `GRASK_HOME` pointing elsewhere — fall back to the resolver, once:
@@ -94,11 +97,15 @@ resolved `"$GRASK" …` if you had to fall back.
    - Premise rejected: `~/.claude/grask/grask record <probe_id> --wrong
      --objection "<their words>"` (omit `--objection` if they gave no reason).
 
-   Show the result: ✓ or ✗ from `outcome`, then the `explanation` verbatim,
-   then the withheld provenance — `This came up from: <topic>` — now that the
-   answer is settled and the topic can no longer leak it. If the command prints
-   `{"error": ...}`, show the error and stop — do not retry with different
-   flags.
+   Print the `display` field verbatim, as markdown, and stop. It is already the
+   whole result — verdict, the correct option where there is one, the
+   explanation, and the withheld provenance, now that the answer is settled and
+   the topic can no longer leak it. Do not restate it, summarise it, add a
+   verdict of your own, or comment on how the answer went. You did not grade it
+   and you still have not seen the key except in that string.
+
+   If the command prints `{"error": ...}`, show the error and stop — do not
+   retry with different flags.
 
 4. Run `serve` again. If another probe is pending, ask a native yes/no question
    — `Serve the next probe?` with options `Yes` and `Stop` — rather than a

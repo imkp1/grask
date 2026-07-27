@@ -124,10 +124,16 @@ why.
 
 ### Approving the two commands it runs
 
-Optional, and only for the `/grask` skill inside Claude Code. The skill reaches
-grask by running its shim, so the first `/grask` of a session asks you to approve a
-`Bash` command. To approve the two calls once instead of every session, add them to
-the `allow` list in `~/.claude/settings.json`:
+**If you installed the plugin, there is nothing to do here.** The plugin ships a
+`PreToolUse` hook that approves exactly `~/.claude/grask/grask serve` and
+`… record`, with the flags those two take, and stays silent about every other
+command in your session. Without it a single probe costs two or three approval
+taps — `serve`, `record`, `serve` again — which is more taps than the probe has
+answers.
+
+The rest of this section is for a **standalone `pip install grask`**, which has no
+plugin hooks and so still prompts. To approve the two calls once instead of every
+session, add them to the `allow` list in `~/.claude/settings.json`:
 
 ```json
 {
@@ -142,8 +148,7 @@ the `allow` list in `~/.claude/settings.json`:
 
 Those two are the skill's entire interface: `serve` prints the next question and
 writes nothing, `record` grades one answer. Neither takes input from the model
-beyond a probe id and your pick. Skipping this only costs you a keystroke per
-session.
+beyond a probe id and your pick.
 
 ## Use
 
