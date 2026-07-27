@@ -116,6 +116,50 @@ def counts(store: Store) -> tuple[int, int, int]:
     )
 
 
+def test_the_session_is_marked_capturing_before_the_first_model_call(
+    store: Store, tmp_path: Path
+):
+    """The window this closes: ~30s of three sequential model calls during which
+    an ended session was indistinguishable from one that never happened, so a
+    still-open window's `/grask` said "you're caught up" about a probe that was
+    seconds away.
+
+    Asserted from inside triage, which is the earliest thing that costs money.
+    """
+    seen = {}
+
+    def triage(session):
+        seen["reason"] = store.empty_reason()
+        seen["verdict"] = store.conn.execute(
+            "SELECT verdict FROM sessions"
+        ).fetchone()["verdict"]
+        return TriageVerdict(
+            session_id=session.session_id, verdict="silent", reason="nothing here"
+        )
+
+    capture_session(transcript(tmp_path, "ship it"), store, triage=triage)
+
+    assert seen["verdict"] == "capturing"
+    assert seen["reason"] == "capturing"
+    # And it does not outlive the run: the verdict replaces it, in one row.
+    assert counts(store) == (1, 0, 0)
+    assert store.empty_reason() == "never"
+
+
+def test_a_crashed_stage_still_clears_the_capturing_marker(store: Store, tmp_path: Path):
+    """Error containment has to cover the marker too. A marker left behind by a
+    stage that raised would promise a probe that is never coming."""
+
+    def explode(session):
+        raise LLMError("triage fell over")
+
+    capture_session(transcript(tmp_path, "ship it"), store, triage=explode)
+
+    row = store.conn.execute("SELECT verdict FROM sessions").fetchone()
+    assert row["verdict"] == "error"
+    assert store.empty_reason() == "never"
+
+
 def test_no_human_turns_records_silent_without_triaging(store: Store, tmp_path: Path):
     # A `raise` here would be swallowed by capture's own error containment and the
     # test would pass for the wrong reason. Record the call and assert on it after.

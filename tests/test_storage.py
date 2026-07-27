@@ -21,7 +21,7 @@ import pytest
 from grask.ask import AnswerTurn, Interrogation
 from grask.probe import Probe, Rubric
 from grask.seed import Seed
-from grask.storage import PROBE_TTL_DAYS, Store, grask_home
+from grask.storage import CAPTURE_STALE_MINUTES, PROBE_TTL_DAYS, Store, grask_home
 
 
 def iso_days_ago(days: int) -> str:
@@ -507,8 +507,98 @@ class TestNextProbe:
         assert pending is not None and pending.probe_id == probe_id
 
 
+class TestCapturingMarker:
+    """The in-flight state: a session that ended but has not finished capturing.
+
+    The bug this exists for: `/grask` in a still-open window, seconds after
+    another window closed, reported "you're caught up — more after your next
+    session" about a probe that was thirty seconds from being written. The queue
+    could not tell "nothing to ask" from "not yet".
+    """
+
+    def test_a_marked_session_reports_capturing(self, store: Store):
+        store.begin_session(session_id="live", transcript_path="/t/live.jsonl")
+
+        assert store.next_probe() is None
+        assert store.empty_reason() == "capturing"
+
+    def test_the_verdict_replaces_the_marker(self, store: Store):
+        store.begin_session(session_id="live", transcript_path="/t/live.jsonl")
+        store.record_session(
+            session_id="live",
+            transcript_path="/t/live.jsonl",
+            cwd="/repo",
+            git_branch="main",
+            verdict="silent",
+            cost_usd=0.02,
+        )
+
+        row = store.conn.execute(
+            "SELECT verdict, cwd, cost_usd FROM sessions WHERE session_id = 'live'"
+        ).fetchone()
+        assert row["verdict"] == "silent"
+        assert row["cwd"] == "/repo"
+        assert row["cost_usd"] == 0.02
+        assert store.empty_reason() == "never"
+
+    def test_a_terminal_verdict_is_still_immutable(self, store: Store):
+        """The marker is the one row a verdict may overwrite. Idempotency for
+        every other row is what stands between a re-fired hook and paying twice.
+        """
+        store.record_session(
+            session_id="done",
+            transcript_path="/t/done.jsonl",
+            cwd="/repo",
+            git_branch="main",
+            verdict="silent",
+        )
+        store.record_session(
+            session_id="done",
+            transcript_path="/t/done.jsonl",
+            cwd="/elsewhere",
+            git_branch="other",
+            verdict="ask",
+            topic="a topic that must not land",
+        )
+
+        row = store.conn.execute(
+            "SELECT verdict, cwd, topic FROM sessions WHERE session_id = 'done'"
+        ).fetchone()
+        assert row["verdict"] == "silent"
+        assert row["cwd"] == "/repo"
+        assert row["topic"] is None
+
+    def test_a_fresh_marker_blocks_a_second_capture(self, store: Store):
+        store.begin_session(session_id="live", transcript_path="/t/live.jsonl")
+
+        assert store.has_session("live") is True
+
+    def test_a_stale_marker_stops_claiming_anything(self, store: Store):
+        """A worker killed mid-flight must not jam its session forever, nor keep
+        promising a probe that is never coming."""
+        store.begin_session(session_id="dead", transcript_path="/t/dead.jsonl")
+        stale = datetime.now(timezone.utc) - timedelta(minutes=CAPTURE_STALE_MINUTES + 1)
+        store.conn.execute(
+            "UPDATE sessions SET triaged_at = ? WHERE session_id = 'dead'",
+            (stale.isoformat(),),
+        )
+        store.conn.commit()
+
+        assert store.has_session("dead") is False
+        assert store.empty_reason() == "never"
+
+    def test_capturing_outranks_expiry(self, store: Store):
+        """Both are temporary; only one of them ends in a question."""
+        TestEmptyReason().stored(
+            store, session_id="old", created_at=iso_days_ago(PROBE_TTL_DAYS + 1)
+        )
+        store.begin_session(session_id="live", transcript_path="/t/live.jsonl")
+
+        assert store.empty_reason() == "capturing"
+
+
 class TestEmptyReason:
-    """The four ways an empty queue can be empty, kept distinguishable."""
+    """The five ways an empty queue can be empty, kept distinguishable."""
 
     def stored(self, store: Store, *, session_id: str, created_at: str) -> int:
         return TestNextProbe().stored(

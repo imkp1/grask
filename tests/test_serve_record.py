@@ -210,9 +210,10 @@ class TestRecord:
 
         assert code == 0
         out = json.loads(capsys.readouterr().out)
-        # Two fields and no third: `explanation` is inside `display` now, and a
+        # Three fields and no fourth: `explanation` is inside `display`, and a
         # second copy is a second thing that can disagree with the first.
-        assert set(out) == {"outcome", "display"}
+        # `next` is what the skill used to spend a whole `serve` round-trip on.
+        assert set(out) == {"outcome", "display", "next"}
         assert out["outcome"] == "passed"
         assert "\u2713 Correct" in out["display"]
         assert a_probe().explanation in out["display"]
@@ -220,6 +221,52 @@ class TestRecord:
         assert len(rows) == 1
         assert rows[0]["outcome"] == "passed"
         assert rows[0]["confidence"] is None
+
+    def test_next_carries_the_following_probe_so_the_skill_need_not_serve_again(
+        self, db: Path, capsys
+    ):
+        """The round-trip this removes is the one the developer waits through:
+        `serve` is 60ms of SQLite wrapped in seconds of model turn."""
+        first = stored_probe(db)
+        second = stored_probe(db, session_id="0198e4f2")
+
+        run(db, ["record", str(first), "--pick", "a"])
+
+        upcoming = json.loads(capsys.readouterr().out)["next"]
+        assert upcoming["probe_id"] == second
+        assert upcoming["question"] == a_probe().question
+        assert upcoming["options"] == list(a_probe().options)
+
+    def test_next_never_leaks_the_answer_key(self, db: Path, capsys):
+        """`next` is a served payload and is held to serve's contract: the model
+        relaying it must not be able to read the answer off the wire."""
+        stored_probe(db)
+        second = stored_probe(db, session_id="0198e4f2")
+
+        run(db, ["record", str(second), "--pick", "a"])
+
+        out = capsys.readouterr().out
+        upcoming = json.loads(out)["next"]
+        assert set(upcoming) == {
+            "probe_id",
+            "question",
+            "options",
+            "topic",
+            "created_at",
+        }
+        assert a_probe().explanation not in json.dumps(upcoming)
+
+    def test_next_explains_an_empty_queue_the_same_way_serve_does(
+        self, db: Path, capsys
+    ):
+        probe_id = stored_probe(db)
+
+        run(db, ["record", str(probe_id), "--pick", "a"])
+
+        upcoming = json.loads(capsys.readouterr().out)["next"]
+        assert upcoming["pending"] is None
+        assert upcoming["reason"] == "caught_up"
+        assert upcoming["note"] == EMPTY_QUEUE_NOTES["caught_up"]
 
     def test_an_uppercase_pick_is_the_same_pick(self, db: Path, capsys):
         # The delivery surface labels options "a)".."d)" and hands back the

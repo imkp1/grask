@@ -17,13 +17,45 @@ from typing import Any
 
 DEFAULT_TIMEOUT = 180
 
-# Triage reasons about text that is already in the prompt; it has nothing to look
-# up. Granting tools would let it wander into the repo, which costs money and
-# turns a fast classifier into an agent.
-NO_TOOLS = (
-    "--disallowed-tools",
-    "Bash Edit Write Read Glob Grep WebFetch WebSearch Task",
-)
+# Every stage reasons about text that is already in the prompt; none of them has
+# anything to look up. Granting tools would let a stage wander into the repo,
+# which costs money and turns a fast classifier into an agent.
+#
+# `--tools ""` rather than `--disallowed-tools <list>`: both refuse the same
+# calls, but a disallowed tool is a tool the model was still *told about*.
+# Measured on a trivial prompt, warm cache: 8,918 -> 5,585 input tokens and
+# $0.0048 -> $0.0031, reproduced across runs. Three calls per capture, so ~10k
+# tokens a session for definitions nothing was allowed to use.
+#
+# It buys tokens, not seconds. The first measurement appeared to show 0.6s off
+# the wall too; at n=3 the same two times turn up swapped between the arms, so
+# that was API variance (+/-700ms call to call) and not this flag. Capture's
+# ~30s is three sequential model calls on a ~15k-token dialogue, and no flag
+# here touches that.
+NO_TOOLS = ("--tools", "")
+
+# Each `-p` call is itself a session, and a persisted session is a transcript on
+# disk — which the SessionEnd hook then captures, which is how grask came to
+# hold 279 stage-0 rows describing its own model calls. They were free (no human
+# turn survives stage 0) but they are three spurious worker spawns per capture
+# and they make the corpus statistics read as noise.
+NO_PERSISTENCE = ("--no-session-persistence",)
+
+# Flags worth having but not worth dying for. If the installed CLI does not know
+# one of them it exits non-zero before reaching the model, and at a SessionEnd
+# hook that failure reaches nobody — every capture would silently stop. So an
+# unrecognised-option failure demotes the call to the flags that have always
+# worked and remembers the demotion for the rest of the process.
+OPTIONAL = (*NO_TOOLS, *NO_PERSISTENCE)
+FALLBACK = ("--disallowed-tools", "Bash Edit Write Read Glob Grep WebFetch WebSearch Task")
+
+# Set once, by `complete`, when the CLI rejects a flag in OPTIONAL.
+_degraded = False
+
+# What an argument parser says when it has never heard of a flag. Matched
+# loosely on purpose: the alternative is treating a real model failure as a flag
+# problem and silently retrying every call twice.
+UNKNOWN_OPTION = ("unknown option", "unknown argument", "unrecognized")
 
 # Every call inherits the user's Claude Code context, and the skill listing is the
 # largest part of it — measured at 20.5k -> 7.8k tokens (cost $0.146 -> $0.078)
@@ -47,27 +79,31 @@ class Completion:
     duration_ms: int | None
 
 
-def complete(prompt: str, *, timeout: int = DEFAULT_TIMEOUT) -> Completion:
-    """Run one non-interactive turn and return its text.
+def build_argv(prompt: str, *, degraded: bool = False) -> list[str]:
+    """The CLI invocation for one stage.
 
-    Deliberately no `--model`: the user's selection is the quality bar, and it is
-    theirs to set.
+    `degraded` drops the flags a CLI might not recognise, keeping the ones that
+    have shipped since the beginning. The output contract — `-p`, JSON envelope
+    — is identical either way, so nothing downstream has to know which ran.
     """
-    argv = [
+    return [
         "claude",
         "-p",
         prompt,
         "--output-format",
         "json",
         "--strict-mcp-config",
-        *NO_TOOLS,
+        *(FALLBACK if degraded else OPTIONAL),
         *NO_SKILLS,
     ]
+
+
+def _run(argv: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
     try:
         # stdin must be closed explicitly. The CLI waits on it and then warns,
         # and at a SessionEnd hook there is no terminal attached to supply it —
         # inheriting the parent's stdin turns a 3s call into a stall.
-        proc = subprocess.run(
+        return subprocess.run(
             argv,
             capture_output=True,
             text=True,
@@ -79,6 +115,26 @@ def complete(prompt: str, *, timeout: int = DEFAULT_TIMEOUT) -> Completion:
         raise LLMError("claude CLI not found on PATH") from exc
     except subprocess.TimeoutExpired as exc:
         raise LLMError(f"claude timed out after {timeout}s") from exc
+
+
+def complete(prompt: str, *, timeout: int = DEFAULT_TIMEOUT) -> Completion:
+    """Run one non-interactive turn and return its text.
+
+    Deliberately no `--model`: the user's selection is the quality bar, and it is
+    theirs to set.
+    """
+    global _degraded
+
+    proc = _run(build_argv(prompt, degraded=_degraded), timeout)
+
+    if proc.returncode != 0 and not _degraded:
+        stderr = proc.stderr.strip()
+        if any(marker in stderr.lower() for marker in UNKNOWN_OPTION):
+            # One retry, then never again this process. The flags in OPTIONAL are
+            # savings, not requirements, and a capture that fails because of a
+            # saving fails where nobody is looking.
+            _degraded = True
+            proc = _run(build_argv(prompt, degraded=True), timeout)
 
     if proc.returncode != 0:
         raise LLMError(f"claude exited {proc.returncode}: {proc.stderr.strip()[:400]}")

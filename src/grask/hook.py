@@ -16,6 +16,7 @@ import json
 import subprocess
 import sys
 from collections.abc import Callable
+from pathlib import Path
 from typing import TextIO
 
 from grask.capture import log
@@ -43,13 +44,28 @@ def spawn(transcript_path: str) -> None:
 
 
 def main(stdin: TextIO | None = None, spawn: Callable[[str], None] = spawn) -> int:
-    """Parse the SessionEnd payload and hand off. Always returns 0."""
+    """Parse the SessionEnd payload and hand off. Always returns 0.
+
+    A payload naming a transcript that is not on disk is dropped here rather
+    than spawned. SessionEnd fires for every session, including the ones grask
+    itself creates — each `claude -p` stage is a session — and those run with
+    `--no-session-persistence`, so the path in their payload never becomes a
+    file. Spawning a worker for one buys three processes and an `error` row per
+    capture, describing nothing that went wrong.
+
+    The check is not only about grask's own calls: the same shape appears
+    whenever a transcript is moved or cleaned up between the session ending and
+    the worker starting, which the real log shows happening on its own.
+    """
     stream = sys.stdin if stdin is None else stdin
     try:
         payload = json.loads(stream.read() or "{}")
         transcript_path = payload.get("transcript_path") if isinstance(payload, dict) else None
-        if isinstance(transcript_path, str) and transcript_path:
-            spawn(transcript_path)
+        if not isinstance(transcript_path, str) or not transcript_path:
+            return 0
+        if not Path(transcript_path).exists():
+            return 0
+        spawn(transcript_path)
     except Exception as exc:
         log(f"hook ignored a payload it could not use: {exc!r}")
     return 0

@@ -110,8 +110,24 @@ ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
 # can fall out of sync with the clock.
 PROBE_TTL_DAYS = 7
 
-# The four ways `next_probe` can come back with nothing. See `empty_reason`.
-EmptyReason = Literal["over_cap", "expired", "caught_up", "never"]
+# The five ways `next_probe` can come back with nothing. See `empty_reason`.
+EmptyReason = Literal["over_cap", "capturing", "expired", "caught_up", "never"]
+
+# The verdict a session carries while its capture is still running. Not a
+# triage outcome — `capture_session` writes it before the first model call and
+# overwrites it with the real verdict at the end. It exists so the ~30s the
+# pipeline spends in three sequential model calls is a state the queue can
+# name, rather than a window in which a pending probe is indistinguishable from
+# no probe at all.
+CAPTURING = "capturing"
+
+# How long a `capturing` row is believed. The pipeline's worst case is triage
+# (180s) plus seed (180s) plus probe's three attempts (540s) = 15 minutes, so
+# anything older than this is a worker that died without writing its verdict —
+# a crash, a reboot, a `kill`. Past the window the row stops claiming a probe is
+# coming and stops blocking a re-capture of the same transcript, because a
+# marker with no way out is how a queue jams permanently.
+CAPTURE_STALE_MINUTES = 20
 
 
 def _pending_from_row(row: sqlite3.Row) -> PendingProbe:
@@ -214,11 +230,54 @@ class Store:
     def close(self) -> None:
         self.conn.close()
 
+    def _capture_cutoff(self) -> str:
+        return (
+            datetime.now(timezone.utc) - timedelta(minutes=CAPTURE_STALE_MINUTES)
+        ).isoformat()
+
     def has_session(self, session_id: str) -> bool:
+        """Whether this session is already accounted for, and must not be re-captured.
+
+        A fresh `capturing` row counts: a hook that fires twice for one session
+        must not pay for it twice, and the second worker would race the first.
+        A stale one does not, which is the whole of the recovery path — a worker
+        killed mid-flight leaves a row that would otherwise block its session
+        forever while promising a probe that is never coming.
+        """
         row = self.conn.execute(
-            "SELECT 1 FROM sessions WHERE session_id = ?", (session_id,)
+            "SELECT 1 FROM sessions WHERE session_id = :id"
+            "  AND (verdict != :capturing OR triaged_at >= :cutoff)",
+            {
+                "id": session_id,
+                "capturing": CAPTURING,
+                "cutoff": self._capture_cutoff(),
+            },
         ).fetchone()
         return row is not None
+
+    def begin_session(self, *, session_id: str, transcript_path: str) -> None:
+        """Mark a session as being captured, before the first model call.
+
+        Deliberately carries none of triage's fields: nothing is known yet, and
+        a row that guessed would be a row `record_session` has to correct.
+        `triaged_at` is the start time here and the finish time on the row that
+        replaces it — a marker nobody can read for more than 20 minutes does not
+        need two columns to say when it was written.
+        """
+        self.conn.execute(
+            "INSERT INTO sessions"
+            " (session_id, transcript_path, cwd, git_branch, verdict, triaged_at)"
+            " VALUES (:id, :path, NULL, NULL, :capturing, :now)"
+            " ON CONFLICT(session_id) DO UPDATE SET triaged_at = :now"
+            "  WHERE sessions.verdict = :capturing",
+            {
+                "id": session_id,
+                "path": transcript_path,
+                "capturing": CAPTURING,
+                "now": _now(),
+            },
+        )
+        self.conn.commit()
 
     def record_session(
         self,
@@ -233,7 +292,13 @@ class Store:
         cost_usd: float | None = None,
         duration_ms: int | None = None,
     ) -> None:
-        """Record one triaged session. A second call for the same id does nothing.
+        """Record one triaged session's outcome.
+
+        A second call for the same id does nothing — *unless* the row still says
+        `capturing`, which is this session's own marker from `begin_session` and
+        the one row a verdict is allowed to replace. Terminal verdicts stay
+        immutable: that is what stands between a re-fired hook and paying for
+        the same session twice.
 
         `cost_usd` and `duration_ms` are triage's alone. Seed and probe carry
         their own, because a single column that means different things per
@@ -243,22 +308,29 @@ class Store:
         without ever calling a model.
         """
         self.conn.execute(
-            "INSERT OR IGNORE INTO sessions"
+            "INSERT INTO sessions"
             " (session_id, transcript_path, cwd, git_branch, verdict, signal, topic,"
             "  cost_usd, duration_ms, triaged_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                session_id,
-                transcript_path,
-                cwd,
-                git_branch,
-                verdict,
-                signal,
-                topic,
-                cost_usd,
-                duration_ms,
-                _now(),
-            ),
+            " VALUES (:id, :path, :cwd, :branch, :verdict, :signal, :topic,"
+            "         :cost, :duration, :now)"
+            " ON CONFLICT(session_id) DO UPDATE SET"
+            "  transcript_path = :path, cwd = :cwd, git_branch = :branch,"
+            "  verdict = :verdict, signal = :signal, topic = :topic,"
+            "  cost_usd = :cost, duration_ms = :duration, triaged_at = :now"
+            " WHERE sessions.verdict = :capturing",
+            {
+                "id": session_id,
+                "path": transcript_path,
+                "cwd": cwd,
+                "branch": git_branch,
+                "verdict": verdict,
+                "signal": signal,
+                "topic": topic,
+                "cost": cost_usd,
+                "duration": duration_ms,
+                "capturing": CAPTURING,
+                "now": _now(),
+            },
         )
         self.conn.commit()
 
@@ -325,12 +397,17 @@ class Store:
         """Why `next_probe` came back empty, for callers that must explain it.
 
         Only meaningful once `next_probe` has returned None — this does not
-        re-check that, it just accounts for the four ways a queue can look empty:
+        re-check that, it just accounts for the five ways a queue can look empty:
 
         - `over_cap`: servable rows exist but carry more options than
           `max_options`. First in precedence because it is the only reason with
           an action attached — another surface (the terminal) can still ask them,
           so a caller that reports "nothing queued" here contradicts itself.
+        - `capturing`: a session ended within the last `CAPTURE_STALE_MINUTES`
+          and its pipeline has not finished writing. Second because it is the
+          only other reason that is temporary: the queue is not empty so much as
+          not yet full, and every other note here would tell the developer to go
+          end another session — the one action that does not help.
         - `expired`: probes were raised and went unasked past `PROBE_TTL_DAYS`.
         - `caught_up`: probes exist and none is still waiting.
         - `never`: no probe has ever been written.
@@ -348,12 +425,21 @@ class Store:
             "     AND p.created_at >= :cutoff AND p.options IS NOT NULL"
             "     AND :cap IS NOT NULL AND json_valid(p.options) = 1"
             "     AND json_array_length(p.options) > :cap) AS over_cap,"
+            "  (SELECT COUNT(*) FROM sessions WHERE verdict = :capturing"
+            "     AND triaged_at >= :stale) AS capturing,"
             f"  (SELECT COUNT(*) {unasked} AND p.created_at < :cutoff) AS expired",
-            {"cutoff": cutoff, "cap": max_options},
+            {
+                "cutoff": cutoff,
+                "cap": max_options,
+                "capturing": CAPTURING,
+                "stale": self._capture_cutoff(),
+            },
         ).fetchone()
 
         if row["over_cap"]:
             return "over_cap"
+        if row["capturing"]:
+            return "capturing"
         if row["expired"]:
             return "expired"
         return "caught_up" if row["total"] else "never"

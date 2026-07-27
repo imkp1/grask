@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import random
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -21,13 +22,19 @@ import pytest
 from grask.dialogue import Dialogue, Reply
 from grask.llm import Completion, LLMError
 from grask.probe import (
+    CONSEQUENCE_FRAME,
+    DEFAULT_FRAME,
+    FRAMES,
     MAX_ATTEMPTS,
+    MECHANISM_FRAME,
     Rubric,
     build_prompt,
+    frame_for,
     parse_probe,
     probe,
 )
 from grask.seed import Seed
+from grask.select import SIGNAL_RANK
 from grask.transcript import Turn
 
 SEED = Seed(
@@ -309,7 +316,11 @@ class TestRegeneration:
         """
 
         def fake(prompt: str) -> Completion:
-            if "rejected" not in prompt.lower():
+            # Keyed on the correction header rather than a bare "rejected": the
+            # base prompt is free to use that word, and once it did, this fake
+            # answered the first call as though it were the retry and the test
+            # silently stopped testing regeneration at all.
+            if "Your previous attempt was rejected" not in prompt:
                 return completion(response(question=self.COMPOUND))
             return completion(response())
 
@@ -341,3 +352,47 @@ class TestPrompt:
 
         assert "you asked" in prompt
         assert "mechanism" in prompt
+
+
+class TestFraming:
+    """Which shape of question the signal earns.
+
+    Stage 1 already knows whether the developer argued with a proposal or merely
+    watched a pattern go past. Until this existed stage 3 discarded that and
+    asked every moment "what does this API return" — recall, aimed squarely at
+    the two signals where judgment was the thing that happened.
+    """
+
+    def test_a_judgment_signal_gets_the_consequence_frame(self):
+        for signal in ("pushed_back", "asked_why"):
+            assert frame_for(signal) is CONSEQUENCE_FRAME
+
+    def test_a_recall_signal_keeps_the_mechanism_frame(self):
+        for signal in ("new_pattern", "explained_at_length"):
+            assert frame_for(signal) is MECHANISM_FRAME
+
+    def test_every_ranked_signal_has_a_frame(self):
+        """A signal `select` can rank but stage 3 cannot frame would silently
+        fall back, which is the drift this catches."""
+        assert set(FRAMES) == set(SIGNAL_RANK)
+
+    def test_an_unknown_signal_falls_back_rather_than_raising(self):
+        """Unreachable — triage rejects unknown signals — so the cost of being
+        wrong here is a plainer question, never a lost capture."""
+        assert frame_for("invented_signal") is DEFAULT_FRAME
+
+    def test_the_frame_reaches_the_prompt(self):
+        pushed = build_prompt(replace(SEED, signal="pushed_back"), DIALOGUE)
+        watched = build_prompt(replace(SEED, signal="new_pattern"), DIALOGUE)
+
+        assert "Counterfactual" in pushed
+        assert "Counterfactual" not in watched
+
+    def test_no_frame_licenses_an_ungradable_question(self):
+        """A frame chooses the shape of the question, never whether it has an
+        answer key. An opinion question cannot exist in a design with no judge.
+        """
+        for signal in FRAMES:
+            prompt = build_prompt(replace(SEED, signal=signal), DIALOGUE)
+            assert "exactly ONE of" in prompt
+        assert "has no answer key and is not a probe" in CONSEQUENCE_FRAME

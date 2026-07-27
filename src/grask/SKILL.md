@@ -57,9 +57,12 @@ resolved `"$GRASK" …` if you had to fall back.
    If `pending` is null, the queue is empty: relay the `note` field from that
    same JSON and stop. Do not shorten it to "nothing pending" and do not
    generalise across the `reason` codes — `note` already says *why* it is empty,
-   and the four reasons (`never`, `caught_up`, `expired`, `over_cap`) mean
-   different things. `over_cap` especially: those probes are still waiting, they
-   just do not fit this UI, so the note sends the developer to the terminal.
+   and the five reasons (`never`, `caught_up`, `capturing`, `expired`,
+   `over_cap`) mean different things. `over_cap` especially: those probes are
+   still waiting, they just do not fit this UI, so the note sends the developer
+   to the terminal. `capturing` is the other one worth getting right: a session
+   just ended and its question is still being written, so the queue is not empty
+   but early — relay the note and do not suggest ending another session.
    If `grask` cannot be found or run either way, grask is not installed here —
    say so and stop rather than hunting for a checkout to `cd` into.
 
@@ -97,18 +100,29 @@ resolved `"$GRASK" …` if you had to fall back.
    - Premise rejected: `~/.claude/grask/grask record <probe_id> --wrong
      --objection "<their words>"` (omit `--objection` if they gave no reason).
 
-   Print the `display` field verbatim, as markdown, and stop. It is already the
-   whole result — verdict, the correct option where there is one, the
-   explanation, and the withheld provenance, now that the answer is settled and
-   the topic can no longer leak it. Do not restate it, summarise it, add a
-   verdict of your own, or comment on how the answer went. You did not grade it
-   and you still have not seen the key except in that string.
+   Print the `display` field verbatim, as markdown. It is already the whole
+   result — verdict, the correct option where there is one, the explanation,
+   and the withheld provenance, now that the answer is settled and the topic can
+   no longer leak it. Do not restate it, summarise it, add a verdict of your
+   own, or comment on how the answer went. You did not grade it and you still
+   have not seen the key except in that string.
 
    If the command prints `{"error": ...}`, show the error and stop — do not
    retry with different flags.
 
-4. Run `serve` again. If another probe is pending, ask a native yes/no question
-   — `Serve the next probe?` with options `Yes` and `Stop` — rather than a
-   prose offer, so the continue step matches the probe's own picker affordance
-   and per-probe consent stays an explicit tap. Do not auto-serve. On `Yes`,
-   go to step 2; on `Stop`, end.
+4. In that **same reply**, without waiting for a turn of your own, read the
+   `next` field of the `record` output you just used. Do NOT run `serve` again
+   — `next` already holds exactly what `serve` would have printed.
+
+   Everything in a `/grask` round that is not the developer reading or tapping
+   is you taking a turn, and a turn is seconds against 60ms of actual work.
+   Printing the result and offering the next probe are one reply, not two.
+
+   - `next.pending` is null: relay its `note`, exactly as in step 1, and end.
+   - Otherwise a probe is waiting. Ask a native yes/no question — `Serve the
+     next probe?` with options `Yes` and `Stop` — rather than a prose offer, so
+     the continue step matches the probe's own picker affordance and per-probe
+     consent stays an explicit tap. Do not auto-serve, and do not show any part
+     of the next probe inside that yes/no question. On `Yes`, go to step 2
+     building the picker from `next` (it is the served payload — no further
+     command needed); on `Stop`, end.

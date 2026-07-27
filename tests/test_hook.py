@@ -11,6 +11,9 @@ from __future__ import annotations
 
 import io
 import json
+from pathlib import Path
+
+import pytest
 
 from grask.hook import main
 
@@ -19,20 +22,49 @@ def stdin(payload: object) -> io.StringIO:
     return io.StringIO(payload if isinstance(payload, str) else json.dumps(payload))
 
 
-def test_spawns_the_worker_with_the_transcript_path():
+@pytest.fixture
+def transcript(tmp_path: Path) -> Path:
+    """A transcript that is actually on disk.
+
+    The hook now checks, so a fabricated path no longer exercises the spawn
+    path — it exercises the drop path, and would have quietly turned every test
+    below into an assertion about nothing.
+    """
+    path = tmp_path / "0198e4f1.jsonl"
+    path.write_text("{}\n", encoding="utf-8")
+    return path
+
+
+def test_spawns_the_worker_with_the_transcript_path(transcript: Path):
     spawned = []
     code = main(
         stdin=stdin(
             {
                 "session_id": "0198e4f1",
-                "transcript_path": "/p/0198e4f1.jsonl",
+                "transcript_path": str(transcript),
                 "hook_event_name": "SessionEnd",
             }
         ),
         spawn=spawned.append,
     )
     assert code == 0
-    assert spawned == ["/p/0198e4f1.jsonl"]
+    assert spawned == [str(transcript)]
+
+
+def test_a_transcript_that_is_not_on_disk_is_dropped():
+    """SessionEnd fires for grask's own `claude -p` stages too, and those run
+    with `--no-session-persistence` — the path in their payload never becomes a
+    file. Spawning for one costs three processes and an `error` row per capture
+    describing nothing that went wrong.
+    """
+    spawned = []
+
+    code = main(
+        stdin=stdin({"transcript_path": "/p/never-written.jsonl"}), spawn=spawned.append
+    )
+
+    assert code == 0
+    assert spawned == []
 
 
 def test_malformed_stdin_exits_zero_without_spawning():
@@ -53,11 +85,11 @@ def test_missing_transcript_path_exits_zero_without_spawning():
     assert spawned == []
 
 
-def test_a_failing_spawn_still_exits_zero():
+def test_a_failing_spawn_still_exits_zero(transcript: Path):
     def boom(path):
         raise OSError("fork failed")
 
-    assert main(stdin=stdin({"transcript_path": "/p/0198e4f1.jsonl"}), spawn=boom) == 0
+    assert main(stdin=stdin({"transcript_path": str(transcript)}), spawn=boom) == 0
 
 
 def test_spawn_argv_is_the_running_interpreter_and_the_capture_module(monkeypatch, tmp_path):

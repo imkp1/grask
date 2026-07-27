@@ -19,6 +19,7 @@ import json
 import sqlite3
 import sys
 from pathlib import Path
+from typing import Any
 
 from grask.ask import (
     ERROR,
@@ -57,6 +58,10 @@ TERMINAL_EMPTY_NOTES = {
         "after that session ends, so nothing is queued until one closes."
     ),
     "caught_up": f"{NOTHING_PENDING} you're caught up — more after your next session.",
+    "capturing": (
+        "a session just ended and its question is still being written — "
+        "about thirty seconds. try again shortly."
+    ),
     "expired": (
         f"{NOTHING_PENDING} what was queued went unasked for over "
         f"{PROBE_TTL_DAYS} days and expired."
@@ -116,7 +121,7 @@ MORE_LATER = "More arrive after your next session ends."
 # One note per `Store.empty_reason`. An empty queue is the first thing a new
 # install shows and the most common thing a caught-up one shows, so each state
 # says which it is — "nothing pending" alone reads like a failure, and a single
-# shared line would misdescribe three of these four.
+# shared line would misdescribe four of these five.
 EMPTY_QUEUE_NOTES = {
     "never": (
         "Nothing is queued. grask writes probes from a session's transcript "
@@ -124,6 +129,12 @@ EMPTY_QUEUE_NOTES = {
         "least one session has closed — empty by construction, not broken."
     ),
     "caught_up": f"You are caught up: every probe grask raised is answered. {MORE_LATER}",
+    "capturing": (
+        "A session ended in the last few minutes and grask is still writing its "
+        "question — the pipeline is three model calls and takes about thirty "
+        "seconds. Nothing is wrong and nothing is lost; the probe will be here "
+        "shortly. Do not end another session to hurry it along."
+    ),
     "expired": (
         f"Nothing is queued. The probes grask had raised went unasked for more "
         f"than {PROBE_TTL_DAYS} days and expired — a probe about work you no "
@@ -135,6 +146,41 @@ EMPTY_QUEUE_NOTES = {
         f"they are left for the terminal: run `grask` in a shell to answer them."
     ),
 }
+
+
+def _next_payload(store, *, max_options: int | None = MAX_UI_OPTIONS) -> dict[str, Any]:
+    """The next servable probe as a JSON-ready dict, or why there isn't one.
+
+    The one place that shape is built. `serve` prints it and `record` embeds it
+    as `next`, so the model never has to learn two ways of reading "what is
+    waiting" — and, more to the point, never has to spend a second Bash call and
+    a second model turn to find out. `serve` is 60ms; the turn around it is
+    seconds, and the turn is what the developer actually waits through.
+
+    Consuming nothing is preserved: an abandoned Claude session leaves the probe
+    pending, matching Ctrl-C in the terminal path. The one write is the same one
+    `ask` keeps: a row too broken to grade is recorded as an error so it stops
+    blocking the queue, and the loop moves to the next row.
+    """
+    while True:
+        pending = store.next_probe(max_options=max_options)
+        if pending is None:
+            reason = store.empty_reason(max_options=max_options)
+            return {
+                "pending": None,
+                "reason": reason,
+                "note": EMPTY_QUEUE_NOTES[reason],
+            }
+        if _unservable(pending):
+            store.record_ask(resolution(pending, ERROR))
+            continue
+        return {
+            "probe_id": pending.probe_id,
+            "question": pending.question,
+            "options": list(pending.options),
+            "topic": pending.rubric.topic,
+            "created_at": pending.created_at,
+        }
 
 
 def _serve(store_factory) -> int:
@@ -151,35 +197,8 @@ def _serve(store_factory) -> int:
     path can still ask those rows.
     """
     with store_factory() as store:
-        while True:
-            pending = store.next_probe(max_options=MAX_UI_OPTIONS)
-            if pending is None:
-                reason = store.empty_reason(max_options=MAX_UI_OPTIONS)
-                print(
-                    json.dumps(
-                        {
-                            "pending": None,
-                            "reason": reason,
-                            "note": EMPTY_QUEUE_NOTES[reason],
-                        }
-                    )
-                )
-                return 0
-            if _unservable(pending):
-                store.record_ask(resolution(pending, ERROR))
-                continue
-            print(
-                json.dumps(
-                    {
-                        "probe_id": pending.probe_id,
-                        "question": pending.question,
-                        "options": list(pending.options),
-                        "topic": pending.rubric.topic,
-                        "created_at": pending.created_at,
-                    }
-                )
-            )
-            return 0
+        print(json.dumps(_next_payload(store)))
+    return 0
 
 
 def _shim(args: argparse.Namespace) -> int:
@@ -247,7 +266,18 @@ def _record(args: argparse.Namespace, parser: argparse.ArgumentParser, store_fac
             # refusal, not an overwrite.
             return _fail(f"probe {args.probe_id} was already answered")
 
-    # Two fields, and only one of them is for reading. `display` is the whole
+        # Answered inside the same open store, and the same process, as the
+        # write above: what is pending next is knowable here for free, and the
+        # `serve` call the skill used to make for it cost a Bash round-trip and
+        # a model turn — seconds, against 60ms of actual work.
+        #
+        # This is not auto-serving. The payload is inert until the skill asks
+        # the developer whether to continue; per-probe consent stays an explicit
+        # tap, as "Restraint" requires. What is removed is the wait, not the
+        # question.
+        upcoming = _next_payload(store)
+
+    # Three fields, and only one of them is for reading. `display` is the whole
     # result, rendered here rather than composed by the model: a surface handed
     # loose parts formats them differently every time it is edited, which is how
     # the skill once printed a bare `✗` on a line of its own. `explanation` is
@@ -258,6 +288,7 @@ def _record(args: argparse.Namespace, parser: argparse.ArgumentParser, store_fac
             {
                 "outcome": interrogation.outcome,
                 "display": result_block(pending, interrogation, style=MARKDOWN),
+                "next": upcoming,
             }
         )
     )
