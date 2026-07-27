@@ -422,5 +422,3 @@ def probe(
         return replace(parsed, cost_usd=spent)
 
     raise last if last else LLMError("probe exhausted its attempts without an error")
-
-

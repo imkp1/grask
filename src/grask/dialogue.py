@@ -17,12 +17,18 @@ a question about text nobody typed is the failure that gets this uninstalled.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from grask.transcript import HUMAN_MARKERS, Turn, _parse_timestamp
+from grask.transcript import (
+    EDIT_TOOLS,
+    Turn,
+    _parse_timestamp,
+    human_turn_text,
+    iter_records,
+    message_content,
+)
 
 # Per side of one edit. A vendored blob or a generated client is the common
 # reason a single edit is enormous, and none of it is the developer's thinking.
@@ -35,10 +41,6 @@ MAX_EDIT_CHARS = 2000
 MAX_REPLY_CHARS = 4000
 
 TRUNCATED = "\n… [truncated]"
-
-# Tools whose input carries file content worth grounding a rubric in. `Read` and
-# `Bash` are deliberately absent: what the agent looked at is not what shipped.
-EDIT_TOOLS = ("Edit", "Write", "NotebookEdit")
 
 
 def _clip(text: str, limit: int) -> str:
@@ -128,56 +130,36 @@ def extract_dialogue(path: Path) -> Dialogue:
     an explanation given *after* the developer pushed back is evidence of
     something different from one given before, and a rubric that cannot tell
     those apart misattributes what they understood.
-
-    Malformed lines are skipped rather than raised on, for the same reason as
-    stage 0: a live process is appending, so the last line may be a partial write.
     """
     dialogue = Dialogue(session_id=path.stem, path=path)
 
-    with path.open(encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(record, dict):
-                continue
+    for record in iter_records(path):
+        dialogue.cwd = dialogue.cwd or record.get("cwd")
+        dialogue.git_branch = dialogue.git_branch or record.get("gitBranch")
 
-            dialogue.cwd = dialogue.cwd or record.get("cwd")
-            dialogue.git_branch = dialogue.git_branch or record.get("gitBranch")
+        if (text := human_turn_text(record)) is not None:
+            dialogue.events.append(
+                Turn(
+                    text=text,
+                    timestamp=_parse_timestamp(record.get("timestamp")),
+                    index=len(dialogue.events),
+                )
+            )
+            continue
 
-            message = record.get("message")
-            content = message.get("content") if isinstance(message, dict) else None
-            record_type = record.get("type")
-
-            if record_type == "user" and record.get("promptSource") in HUMAN_MARKERS:
-                # A human turn is a plain string. The block-list shape is how
-                # injected text arrives, and stage 0's filter already excludes
-                # it — this is belt and braces on the load-bearing rule.
-                if isinstance(content, str) and content.strip():
-                    dialogue.events.append(
-                        Turn(
-                            text=content.strip(),
-                            timestamp=_parse_timestamp(record.get("timestamp")),
-                            index=len(dialogue.events),
+        content = message_content(record)
+        if record.get("type") == "assistant" and isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                index = len(dialogue.events)
+                if edit := _edit_from_tool_use(block, index):
+                    dialogue.events.append(edit)
+                elif block.get("type") == "text":
+                    reply = block.get("text")
+                    if isinstance(reply, str) and reply.strip():
+                        dialogue.events.append(
+                            Reply(text=_clip(reply.strip(), MAX_REPLY_CHARS), index=index)
                         )
-                    )
-
-            elif record_type == "assistant" and isinstance(content, list):
-                for block in content:
-                    if not isinstance(block, dict):
-                        continue
-                    index = len(dialogue.events)
-                    if edit := _edit_from_tool_use(block, index):
-                        dialogue.events.append(edit)
-                    elif block.get("type") == "text":
-                        text = block.get("text")
-                        if isinstance(text, str) and text.strip():
-                            dialogue.events.append(
-                                Reply(text=_clip(text.strip(), MAX_REPLY_CHARS), index=index)
-                            )
 
     return dialogue

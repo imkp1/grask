@@ -11,6 +11,7 @@ None of that is the developer thinking.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -32,6 +33,9 @@ from typing import Any
 # exists to find.
 HUMAN_MARKERS = frozenset({"typed", "suggestion_accepted", "queued"})
 
+# The tools whose input says something landed in the developer's codebase, for
+# stage 0's file list and for the dialogue read's before/after both. `Read` and
+# `Bash` are deliberately absent: what the agent looked at is not what shipped.
 EDIT_TOOLS = ("Edit", "Write", "NotebookEdit")
 
 # Subagent transcripts live one level deeper, under this directory name.
@@ -90,6 +94,22 @@ class Session:
         )
 
 
+def normalize(text: str) -> str:
+    """Collapse whitespace and case for comparison only.
+
+    The one normalizer behind both quote checks — stage 1 verifies a moment's
+    quote against the turn it named, stage 2 verifies a seed's quotes against
+    the dialogue, and the two must agree on what "the same words" means. Two
+    implementations of this drifted apart once already; a quote stage 1 accepts
+    and stage 2 rejects costs the whole seed.
+
+    Deliberately lenient about whitespace: verification must not be so literal
+    that a re-wrapped genuine quote fails. Failing true quotes would push us
+    toward trusting the model instead, which is the wrong direction to be pushed.
+    """
+    return " ".join(text.split()).lower()
+
+
 def _parse_timestamp(value: object) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
@@ -99,8 +119,53 @@ def _parse_timestamp(value: object) -> datetime | None:
         return None
 
 
-def _file_from_tool_use(block: dict[str, Any]) -> str | None:
-    """Pull a file path out of an assistant tool_use block, if it edited one."""
+def iter_records(path: Path) -> Iterator[dict[str, Any]]:
+    """Every usable JSON object in a transcript, in order.
+
+    Shared by stage 0 (`extract`) and the wide read (`extract_dialogue`), which
+    walk the same file for different subsets and had drifted into two copies of
+    this loop.
+
+    Malformed lines are skipped rather than raised on: transcripts are appended
+    to by a live process, so the last line may be a partial write.
+    """
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(record, dict):
+                yield record
+
+
+def message_content(record: dict[str, Any]) -> Any:
+    """The `message.content` of a record, or None if it has no message object."""
+    message = record.get("message")
+    return message.get("content") if isinstance(message, dict) else None
+
+
+def human_turn_text(record: dict[str, Any]) -> str | None:
+    """The developer's own words in this record, or None if it is not their turn.
+
+    The load-bearing filter, in one place. `promptSource` is the only field
+    distinguishing a turn the developer authored from a tool result or injected
+    skill text, and a human turn is a plain string — the block-list shape is how
+    injected text arrives. Both stages depend on this being the same rule.
+    """
+    if record.get("type") != "user" or record.get("promptSource") not in HUMAN_MARKERS:
+        return None
+    content = message_content(record)
+    if isinstance(content, str) and content.strip():
+        return content.strip()
+    return None
+
+
+def tool_use_file(block: dict[str, Any]) -> str | None:
+    """The path an assistant tool_use block edited, or None if it edited nothing."""
     if block.get("type") != "tool_use" or block.get("name") not in EDIT_TOOLS:
         return None
     tool_input = block.get("input")
@@ -111,47 +176,28 @@ def _file_from_tool_use(block: dict[str, Any]) -> str | None:
 
 
 def extract(path: Path) -> Session:
-    """Read a transcript and return only what matters.
-
-    Malformed lines are skipped rather than raised on: transcripts are appended to
-    by a live process, so the last line may be a partial write.
-    """
+    """Read a transcript and return only what matters."""
     session = Session(session_id=path.stem, path=path, raw_bytes=path.stat().st_size)
 
-    with path.open(encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(record, dict):
-                continue
+    for record in iter_records(path):
+        session.cwd = session.cwd or record.get("cwd")
+        session.git_branch = session.git_branch or record.get("gitBranch")
 
-            session.cwd = session.cwd or record.get("cwd")
-            session.git_branch = session.git_branch or record.get("gitBranch")
+        if (text := human_turn_text(record)) is not None:
+            session.turns.append(
+                Turn(
+                    text=text,
+                    timestamp=_parse_timestamp(record.get("timestamp")),
+                    index=len(session.turns),
+                )
+            )
+            continue
 
-            record_type = record.get("type")
-            content = record.get("message", {}).get("content") if isinstance(
-                record.get("message"), dict
-            ) else None
-
-            if record_type == "user" and record.get("promptSource") in HUMAN_MARKERS:
-                if isinstance(content, str) and content.strip():
-                    session.turns.append(
-                        Turn(
-                            text=content.strip(),
-                            timestamp=_parse_timestamp(record.get("timestamp")),
-                            index=len(session.turns),
-                        )
-                    )
-
-            elif record_type == "assistant" and isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict) and (found := _file_from_tool_use(block)):
-                        session.files_touched.add(found)
+        content = message_content(record)
+        if record.get("type") == "assistant" and isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and (found := tool_use_file(block)):
+                    session.files_touched.add(found)
 
     return session
 

@@ -15,12 +15,11 @@ than stored.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 
 from grask.dialogue import Dialogue, Edit, Reply
 from grask.llm import Completion, LLMError, complete, extract_json_object
-from grask.transcript import Turn
+from grask.transcript import Turn, normalize
 from grask.triage import Moment
 
 SEED_KEYS = ("topic", "quotes", "refs", "decision", "hypothesis")
@@ -142,16 +141,6 @@ def build_prompt(dialogue: Dialogue, moment: Moment) -> str:
     )
 
 
-def _normalize(text: str) -> str:
-    """Collapse whitespace for comparison only.
-
-    Verification must not be so literal that a re-wrapped genuine quote fails.
-    Failing true quotes would push us toward trusting the model instead, which
-    is the wrong direction to be pushed.
-    """
-    return re.sub(r"\s+", " ", text).strip().lower()
-
-
 def verified_quotes(dialogue: Dialogue, claimed: object) -> tuple[str, ...]:
     """Keep only quotes that actually appear in something the developer typed.
 
@@ -160,12 +149,12 @@ def verified_quotes(dialogue: Dialogue, claimed: object) -> tuple[str, ...]:
     """
     if not isinstance(claimed, list):
         return ()
-    spoken = [_normalize(turn.text) for turn in dialogue.turns]
+    spoken = [normalize(turn.text) for turn in dialogue.turns]
     kept = []
     for quote in claimed:
         if not isinstance(quote, str) or not quote.strip():
             continue
-        needle = _normalize(quote)
+        needle = normalize(quote)
         if any(needle in haystack for haystack in spoken):
             kept.append(quote.strip())
     return tuple(kept)

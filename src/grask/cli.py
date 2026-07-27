@@ -28,10 +28,10 @@ from grask.ask import (
     PREMISE_REJECTED,
     SKIPPED,
     Console,
-    _unservable,
     grade,
     resolution,
     result_block,
+    unservable,
 )
 from grask.ask import (
     ask as _ask,
@@ -171,7 +171,7 @@ def _next_payload(store, *, max_options: int | None = MAX_UI_OPTIONS) -> dict[st
                 "reason": reason,
                 "note": EMPTY_QUEUE_NOTES[reason],
             }
-        if _unservable(pending):
+        if unservable(pending):
             store.record_ask(resolution(pending, ERROR))
             continue
         return {
@@ -186,15 +186,11 @@ def _next_payload(store, *, max_options: int | None = MAX_UI_OPTIONS) -> dict[st
 def _serve(store_factory) -> int:
     """Print the next servable probe as JSON, blind: no key, no explanation.
 
-    Consumes nothing — an abandoned Claude session leaves the probe pending,
-    matching Ctrl-C in the terminal path. The one write is the same one `ask`
-    keeps: a row too broken to grade is recorded as an error so it stops
-    blocking the queue, and the loop moves to the next row.
-
-    An empty queue carries `reason` and `note` because the first `/grask` of a
-    new install always lands here, and "nothing pending" alone reads like a
-    failure. `over_cap` in particular has to be distinguishable: the terminal
-    path can still ask those rows.
+    The payload and its consume-nothing behaviour are `_next_payload`'s; this is
+    the surface that prints it. An empty queue carries `reason` and `note`
+    because the first `/grask` of a new install always lands here, and "nothing
+    pending" alone reads like a failure. `over_cap` in particular has to be
+    distinguishable: the terminal path can still ask those rows.
     """
     with store_factory() as store:
         print(json.dumps(_next_payload(store)))
@@ -208,13 +204,17 @@ def _shim(args: argparse.Namespace) -> int:
     into the shim here, every session, since the root moves on upgrade.
 
     It must never fail a session open, so a shim it could not write is a warning
-    on stderr, not a non-zero exit."""
+    on stderr, not a non-zero exit.
+
+    Silent on success, and that is the point: a SessionStart hook's stdout is
+    injected into the session's context and shown to the developer, so a success
+    line here is a notification about plumbing, in every session, forever —
+    charged to the context window of work that has nothing to do with grask.
+    Only the failure has anything to say, and it says it on stderr."""
     try:
-        shim = write_runner_shim(args.root)
+        write_runner_shim(args.root)
     except OSError as exc:
         print(f"shim: could not write runner shim: {exc}", file=sys.stderr)
-        return 0
-    print(f"shim: wrote runner shim at {shim}")
     return 0
 
 
@@ -244,7 +244,7 @@ def _record(args: argparse.Namespace, parser: argparse.ArgumentParser, store_fac
         pending = store.probe_by_id(args.probe_id)
         if pending is None:
             return _fail(f"no servable probe with id {args.probe_id}")
-        if _unservable(pending):
+        if unservable(pending):
             return _fail(
                 f"probe {args.probe_id} is malformed; `serve` records those as errors"
             )

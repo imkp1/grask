@@ -9,7 +9,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from grask.transcript import Turn, extract, find_transcripts
+from grask.dialogue import extract_dialogue
+from grask.transcript import Turn, extract, find_transcripts, normalize
 
 
 def write_transcript(tmp_path: Path, records: list[dict]) -> Path:
@@ -208,3 +209,49 @@ class TestDiscovery:
 
         found = find_transcripts(tmp_path)
         assert [p.name for p in found] == ["session.jsonl"]
+
+
+class TestSharedFilter:
+    """Stage 0 and the wide read walk the same file, so they walk it through the
+    same helpers. These pin the seam that used to be two copies of one loop."""
+
+    def test_both_reads_see_the_same_human_turns(self, tmp_path):
+        """The load-bearing filter is `human_turn_text`, and it is the one thing
+        stage 0 and the dialogue read must never disagree about: a turn one keeps
+        and the other drops is a quote stage 1 evidences and stage 2 cannot find."""
+        path = write_transcript(
+            tmp_path,
+            [
+                human("why does the shuffle happen at storage time?"),
+                injected_skill("you have superpowers"),
+                tool_result("3 passed"),
+                assistant_edit("/repo/src/probe.py"),
+                human("no, keep the key post-shuffle", source="suggestion_accepted"),
+                {"type": "user", "promptSource": "sdk", "message": {"content": "programmatic"}},
+            ],
+        )
+        assert [t.text for t in extract(path).turns] == [
+            t.text for t in extract_dialogue(path).turns
+        ]
+
+    def test_a_partial_last_line_costs_only_that_line(self, tmp_path):
+        """A live process is appending, so the last line may be half-written.
+        Shared by both reads now, which is why it is asserted on both."""
+        path = write_transcript(tmp_path, [human("first"), human("second")])
+        path.write_text(path.read_text(encoding="utf-8") + '\n{"type": "user", "promp',
+                        encoding="utf-8")
+        assert [t.text for t in extract(path).turns] == ["first", "second"]
+        assert [t.text for t in extract_dialogue(path).turns] == ["first", "second"]
+
+
+class TestNormalize:
+    def test_stage_one_and_stage_two_agree_on_a_rewrapped_quote(self):
+        """Both quote checks normalize before comparing, and they must normalize
+        identically: a quote stage 1 accepts and stage 2 rejects costs the whole
+        seed, silently, at the last stage that could have produced a question."""
+        typed = "why does\n  the  shuffle happen\tat STORAGE time?"
+        quoted = "Why Does The Shuffle Happen At Storage Time?"
+        assert normalize(quoted) in normalize(typed)
+
+    def test_it_does_not_collapse_distinct_words(self):
+        assert normalize("a b") != normalize("ab")
