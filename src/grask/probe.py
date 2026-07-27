@@ -123,6 +123,67 @@ class Probe:
     duration_ms: int | None = None
 
 
+# How to frame the question, keyed by the signal that earned the session its
+# probe. Stage 1 already knows which of four things the developer did; until
+# this existed, stage 3 threw that away and asked every moment the same way.
+#
+# The mismatch that motivated the split: `pushed_back` and `asked_why` are the
+# two signals where the developer's *judgment* was engaged — they argued with a
+# proposal, or they wanted to know why. Flattening those into "what does this
+# API return" tests recall of a decision they already made deliberately, which
+# is the least interesting thing to ask them. The other two signals really are
+# recall — a pattern went by, or the agent explained at length — and keep the
+# mechanism framing.
+#
+# What does NOT vary: exactly one correct option, grounded in the named
+# artifact, portable past this repository. A frame chooses the *shape* of the
+# question, never whether it can be graded. An opinion question has no key, and
+# a probe without a key cannot exist in this design — see "The answer is a
+# pick, not an explanation" in the design doc.
+CONSEQUENCE_FRAME = """\
+This developer exercised judgment here — they pushed back on a proposal, or
+asked why something was the way it was. Do not ask them to recite the decision
+they deliberately made. Ask what that decision *does* once it is running.
+
+Prefer one of these shapes, whichever the artifact actually supports:
+
+- **Counterfactual** — the code holds under an assumption; ask what happens
+  when the assumption stops holding. "X is keyed on Y. If Y stopped being
+  unique, what breaks first?"
+- **Constraint attribution** — a design has a non-obvious forced move; ask
+  which constraint forces it. "Why must the shuffle happen at storage time
+  rather than display time?"
+- **Cost of the road taken** — an alternative was passed over; ask what the
+  chosen option gives up. Name the real cost, not a strawman.
+
+The correct answer must still be a fact about the mechanism, decidable from
+what shipped. "Which approach is nicer" has no answer key and is not a probe.
+The test is unchanged: exactly one option is correct, and a competent developer
+who never saw this session could reason their way to it."""
+
+MECHANISM_FRAME = """\
+Ask about the mechanism itself: what the API, tool, configuration, or algorithm
+does or requires. A pattern went past this developer, or the agent explained
+something at length and they accepted it — what is worth checking is whether
+the thing they accepted actually works the way they think."""
+
+FRAMES = {
+    "pushed_back": CONSEQUENCE_FRAME,
+    "asked_why": CONSEQUENCE_FRAME,
+    "new_pattern": MECHANISM_FRAME,
+    "explained_at_length": MECHANISM_FRAME,
+}
+
+# An unranked signal cannot reach stage 3 — `triage` rejects unknown signals and
+# `select` cannot rank them — so this is the guard for the two drifting apart,
+# and it falls back to the framing that was here before any of this existed.
+DEFAULT_FRAME = MECHANISM_FRAME
+
+
+def frame_for(signal: str) -> str:
+    return FRAMES.get(signal, DEFAULT_FRAME)
+
+
 PROMPT = """\
 You are stage 3 of `grask`. Everything has already been decided except the
 question itself: the session was triaged, the moment selected, and a hypothesis
@@ -130,6 +191,10 @@ formed about what this developer accepted without fully understanding.
 
 Produce ONE multiple-choice question that tests the mechanism at the core of
 that hypothesis.
+
+## How to frame it
+
+{frame}
 
 ## The hypothesis you are testing
 
@@ -153,11 +218,10 @@ that hypothesis.
 
 ## What to produce
 
-`question` — ONE question about the mechanism itself: what the API, tool,
-configuration, or algorithm does or requires. Never a retelling of the
+`question` — ONE question, in the frame given above. Never a retelling of the
 conversation: no "you asked", "you said", "Claude did", or any conversational
 narrative. Ground it in the session's actual artifact — name the file, flag, or
-identifier that shipped — but ask how the mechanism works, not what happened.
+identifier that shipped — but ask how the mechanism behaves, not what happened.
 It must be one question: no "and", no "also", no parts.
 
 The artifact names the setting; the mechanism must outlive it. Ask about
@@ -211,6 +275,7 @@ One JSON object, nothing else:
 
 def build_prompt(seed: Seed, dialogue: Dialogue) -> str:
     return PROMPT.format(
+        frame=frame_for(seed.signal),
         hypothesis=seed.hypothesis,
         topic=seed.topic,
         decision=seed.decision or "(not recorded)",

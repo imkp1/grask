@@ -57,6 +57,13 @@ def capture_session(
         if store.has_session(session_id):
             return
 
+        # Before anything that costs time or money. The three model calls below
+        # take ~30s, and until this row exists a session that just ended is
+        # indistinguishable from a session that never happened — which is how
+        # `/grask` in a still-open window comes back "you're caught up" about a
+        # probe that is thirty seconds from existing.
+        store.begin_session(session_id=session_id, transcript_path=str(transcript_path))
+
         session = extract(Path(transcript_path))
 
         if not session.turns:

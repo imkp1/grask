@@ -97,6 +97,26 @@ inherited terminal is a process that scribbles on the next thing the developer d
 `capture.py` never raises. Nothing is watching its exit code, so every failure has to
 become a row and a log line instead.
 
+The hook drops a payload whose transcript is not on disk rather than spawning for it.
+`SessionEnd` fires for every session including grask's own — each `claude -p` stage *is* a
+session — and those run with `--no-session-persistence`, so the path in their payload never
+becomes a file. Spawning anyway bought three processes and an `error` row per capture,
+describing nothing that went wrong. The same shape appears whenever a transcript is moved or
+cleaned up between the session ending and the worker starting, which the log shows happening
+on its own.
+
+**A session being captured is a state, not a gap.** `capture.py` writes a `capturing` row
+before the first model call and replaces it with the real verdict at the end. Without it the
+~30s the pipeline spends in three sequential model calls was a window in which an ended
+session was indistinguishable from one that never happened — so `/grask` in a still-open
+window answered "you're caught up, more after your next session" about a probe that was
+seconds from existing, and the one action it recommended was the one that does not help. The
+marker is believed for `CAPTURE_STALE_MINUTES` (20, against a worst case of 15 minutes of
+stage timeouts); past that a worker is assumed dead, and the row stops both claiming a probe
+is coming and blocking a re-capture of its session. It is also the one row a verdict may
+overwrite — every other session row stays immutable, which is what stands between a re-fired
+hook and paying for the same session twice.
+
 ### Delivery
 
 `ask.py` is pure logic with an injected console: `(PendingProbe, Console) → Interrogation`.
@@ -643,6 +663,24 @@ why a message was phrased a certain way, workflow or etiquette choices, why the 
 the approach it took. A mechanism has a right answer a question can test; a process choice
 mostly does not.
 
+**The signal chooses the question's shape.** Stage 3 used to ask every moment the same way —
+"what does this API return" — which was the wrong question for half the signals that reach
+it. `pushed_back` and `asked_why` are precisely the moments where the developer's *judgment*
+was engaged: they argued with a proposal, or wanted to know why. Asking them to recite a
+decision they made deliberately is the least interesting thing available. Those two get a
+consequence frame — a counterfactual ("X is keyed on Y; if Y stopped being unique, what
+breaks first?"), a constraint attribution ("which constraint forces the shuffle to happen at
+storage time?"), or the cost of the road taken. `new_pattern` and `explained_at_length` really
+are recall — something went past, or the agent explained and it was accepted — and keep the
+mechanism frame.
+
+What does not vary is the invariant: exactly one correct option, grounded in the named
+artifact, portable past this repository. A frame chooses the shape of a question, never
+whether it can be graded. "Which approach is nicer" has no answer key, and a probe without a
+key cannot exist in a design with no judge — see "The answer is a pick, not an explanation".
+This is the guard the unbuilt `definition_gap` re-cut below already names, applied to the
+taxonomy that actually shipped.
+
 Explicitly not qualifying: files edited, commands run, tests made to pass, config changes,
 dependency bumps, renames, lint fixes, a bug the developer diagnosed themselves, writing
 prose or commit messages, or a session where the developer only said "continue" and "fix it".
@@ -763,10 +801,31 @@ earlier draft reserved both; transcripts turned out tiny — ~0.8 KB of human in
 implementation is a layer, not a design.
 
 **Each `claude -p` call is stripped down.** `--disable-slash-commands` drops the user's skill
-listing from the inherited context — the largest part of it. Tools are disallowed so a stage
-sends one self-contained prompt and gets one JSON object back rather than wandering into the
-repo as an agent. `--bare` would cut more and is rejected: it reads auth strictly from
-`ANTHROPIC_API_KEY`, which breaks the "no second credential" property above.
+listing from the inherited context — the largest part of it. `--tools ""` removes the built-in
+tools rather than forbidding them, so a stage sends one self-contained prompt and gets one JSON
+object back rather than wandering into the repo as an agent; `--disallowed-tools` refused the
+same calls but still spent the tokens describing every tool it was refusing (8,918 → 5,585
+input tokens on a trivial prompt, $0.0048 → $0.0031). `--no-session-persistence` stops each
+call writing a transcript of its own. `--bare` would cut more and is rejected: it reads auth
+strictly from `ANTHROPIC_API_KEY`, which breaks the "no second credential" property above.
+
+These flags are savings, not requirements, and they run where a non-zero exit reaches nobody.
+A CLI that does not recognise one would fail every capture silently, so an
+unrecognised-option failure demotes the call to the flag set that has always worked and
+remembers the demotion for the rest of the process.
+
+**None of it is a latency fix, and the measurement said so.** A first run appeared to show
+`--tools ""` taking 0.6s off the wall; at n=3 the same two times turned up swapped between the
+arms. That was API variance (±700ms call to call), not the flag. Capture's ~30s is three
+sequential model calls over a ~15k-token dialogue and no flag here touches it — the only
+lever left is structural (merging stages 2 and 3 into one call), which would trade the
+quote-verification boundary between them for about ten seconds, and is not taken.
+
+Prompt-prefix caching was measured and rejected as a way to make stages 2 and 3 share the
+dialogue they both send: across two `claude -p` processes only the system prefix is reused
+(3,260 tokens), and the user message is cache-written whole every call regardless of how much
+of it two calls have in common. Ordering the stage prompts to share a prefix would buy
+nothing.
 
 ## Failure modes
 

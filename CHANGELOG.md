@@ -6,6 +6,40 @@ SQLite schema under `GRASK_HOME` carries no migration guarantee yet.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/) once there is a 1.0 to be compatible with.
 
+## Unreleased
+
+- **A session being captured is now a state the queue can name.** Ending one window and
+  running `/grask` in another said "you're caught up — more after your next session" about a
+  probe that was thirty seconds from existing: capture writes nothing until all three of its
+  model calls finish, so an ended session looked exactly like a session that never happened,
+  and the one action the message recommended was the one that does not help. The worker now
+  marks the session `capturing` before it spends anything, and both surfaces have a fifth
+  empty-queue reason that says to wait rather than to go end something. A marker older than 20
+  minutes is a dead worker: it stops promising a probe and stops blocking a re-capture. Verdicts
+  may overwrite that marker and nothing else — every other session row is still immutable, which
+  is what keeps a re-fired hook from paying twice.
+- **Stage 3 asks judgment moments a judgment-shaped question.** Every probe was framed as
+  "what does this API return", including the ones raised because the developer pushed back on a
+  proposal or asked why — recall, aimed at the two signals where judgment was the thing that
+  happened. `pushed_back` and `asked_why` now get a counterfactual, a constraint attribution, or
+  the cost of the road taken; `new_pattern` and `explained_at_length` keep the mechanism framing.
+  The invariant is untouched: exactly one correct option, grounded in the named artifact,
+  portable past the repo. A frame picks the shape of a question, never whether it can be graded.
+- **`record` returns the next probe as `next`.** The skill used to call `serve` again after
+  every answer. `serve` is 60ms of SQLite; the Bash round-trip and model turn wrapped around it
+  are seconds, and that is what the developer actually sat through. Consent is unchanged — the
+  payload is inert until the developer taps `Yes`, and nothing auto-serves.
+- **`claude -p` calls carry `--tools ""` and `--no-session-persistence`.** Withholding the
+  built-in tools rather than forbidding them cuts 8,918 → 5,585 input tokens and $0.0048 →
+  $0.0031 per call, for definitions no stage was allowed to use. Not persisting a session stops
+  each call writing a transcript that the hook then captured — 279 of the store's rows were
+  grask reading its own model calls. Neither is a latency fix and the measurement says so: an
+  apparent 0.6s saving did not survive n=3. A CLI that does not know these flags demotes to the
+  old set rather than failing every capture where nobody would see it.
+- **The hook drops payloads whose transcript is not on disk.** It fired for grask's own
+  non-persisted `-p` sessions, and for transcripts moved or cleaned up before the worker
+  started, spawning workers that could only write `error` rows about nothing.
+
 ## 0.1.0-rc5
 
 - **The result of a pick is rendered in one place, and it names the answer.** The verdict was
