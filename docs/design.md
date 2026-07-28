@@ -57,7 +57,7 @@ the question at session end. It does not: the hook runs detached, the developer 
 walked away, and a prompt written into a closing terminal is a prompt nobody reads. Capture
 happens when the evidence is freshest; the question waits, for at most seven days, until the
 developer asks for it. The split is also what makes the question cost nothing at the
-moment it is generated: nobody is sitting there while three model calls run.
+moment it is generated: nobody is sitting there while four model calls run.
 
 The original pull-based portal is a rejected design; see "Pull-based portal". The dismissal
 risk that motivated it is real and is priced against structurally in "Restraint".
@@ -72,7 +72,7 @@ SessionEnd hook (grask-hook)
         ▼
 capture worker  (python -m grask.capture)
         │
-   transcript.py ─0─▶ triage.py ─1─▶ select.py ─▶ seed.py ─2─▶ probe.py ─3─▶ SQLite
+   transcript.py ─0─▶ triage.py ─1─▶ select.py ─▶ seed.py ─2─▶ probe.py ─3─▶ verify.py ─4─▶ SQLite
                                                                                 │
                                               ┌─────────────────────────────────┘
                                               ▼
@@ -107,11 +107,11 @@ on its own.
 
 **A session being captured is a state, not a gap.** `capture.py` writes a `capturing` row
 before the first model call and replaces it with the real verdict at the end. Without it the
-~30s the pipeline spends in three sequential model calls was a window in which an ended
+~45s the pipeline spends in four sequential model calls was a window in which an ended
 session was indistinguishable from one that never happened — so `/grask` in a still-open
 window answered "you're caught up, more after your next session" about a probe that was
 seconds from existing, and the one action it recommended was the one that does not help. The
-marker is believed for `CAPTURE_STALE_MINUTES` (20, against a worst case of 15 minutes of
+marker is believed for `CAPTURE_STALE_MINUTES` (30, against a worst case of 24 minutes of
 stage timeouts); past that a worker is assumed dead, and the row stops both claiming a probe
 is coming and blocking a re-capture of its session. It is also the one row a verdict may
 overwrite — every other session row stays immutable, which is what stands between a re-fired
@@ -137,7 +137,7 @@ One SQLite file at `~/.claude/grask/grask.db` (`GRASK_HOME` relocates it). Five 
 
 | Table | Holds |
 |---|---|
-| `sessions` | one row per session seen, whatever the outcome — `ask` \| `silent` \| `error` |
+| `sessions` | one row per session seen, whatever the outcome — `ask` \| `silent` \| `unverified` \| `error` |
 | `seeds` | stage 2's topic, verified quotes, refs, decision, hypothesis |
 | `probes` | the question, shuffled options, `correct_idx`, explanation |
 | `asks` | one row per probe answered, `UNIQUE(probe_id)` |
@@ -579,7 +579,7 @@ where a skip is a signal the developer showed up and found nothing worth their t
 Claude Code `SessionEnd` hook. Reads the transcript, runs four stages cheapest-first, writes
 what survives, exits. Fails silently.
 
-### Four stages, one invocation
+### Five stages, one invocation
 
 Each stage filters, so only what survives pays for the next.
 
@@ -613,6 +613,51 @@ replies, and the before/after text of edits — not just the seed.
 the topic; it is not enough to name the file, flag, or identifier that actually shipped, and
 a question that cannot do that is a generic question. At ~0.8 KB of human input per session
 there is no cost side to this tradeoff.
+
+**Stage 4 — verify (`verify.py`, one call).** Read the question and its options *without*
+the key, the explanation, the seed, or the transcript, and judge each option true or false on
+its own with a stated reason. The probe survives only if exactly one option is true and it is
+the stored key. Anything else — two true, none true, one true that is not the key — discards
+the question and records the session `unverified`.
+
+**Why a check and not more prompt.** Stage 3 writes the question, all four options, the key,
+and the explanation in one call, in sequence, and never re-reads an early option against a
+later one. Every failure that produces is already forbidden in the stage 3 prompt, so more
+instruction is the approach that has been tried. Being generated from the session does not
+make an option true either: the transcript supplies the *subject*, the model's own knowledge
+supplies the mechanism, and "make distractors plausible" pushes toward true statements.
+
+**Why it takes a `Probe` and nothing else.** A judge that has seen the reasoning behind the
+answer is the model agreeing with itself. Keeping the seed and the dialogue unavailable at
+the type level is what stops that eroding into a rubber stamp — the signature is the control.
+The judge is also told it has no tools and no repository: given none, two of 47 backtested
+probes answered with an attempted `bash` call instead of JSON rather than reason from the
+question's own premises.
+
+**Why it discards instead of arbitrating.** The original design repointed `correct_idx` when
+the judge named a single true option that was not the key. Backtested over the 47 stored
+probes that judgment landed three times: once on a genuinely false key (a PEP 503 question
+whose key claimed `fault-line` normalises onto `faultline` — it does not), and twice on
+questions about local files, where the judge could only reason from the stem's premises and
+the option it preferred was false. Repointing would have fixed one and installed a falsehood
+in two. It is also the wrong instinct on its own terms: an option a careful reader cannot
+separate from the key is not a question worth twenty seconds either way.
+
+**Why a call failure keeps the probe.** Only a judgment discards. Verification checks a
+question that already exists, so a CLI that cannot run has said nothing about it — treating
+silence as rejection would empty the queue every time the model was unreachable.
+
+**Measured.** Over the 47 stored probes: 44 verified, 3 discarded (6%), 0 with two true
+options. $0.041 per probe against a $0.226 stage 3 baseline, or about +10% on a kept
+session's $0.51 — the invariant that keeps it affordable is that exactly one call per probe
+carries the dialogue, and the rendered dialogue is 92% of stage 3's prompt.
+
+**What it cannot check.** The judge has no repository, so it can only adjudicate claims that
+are true away from this checkout. A probe whose answer turns on the contents of a local file
+is one it must take on the stem's premises — which is the same probe "portable past this
+repository" already rules out under "What one probe can and cannot say". Both of the wrong
+discards above were that shape, so the discard rate is also a weak signal of the question
+being too local to be worth asking.
 
 **Why one invocation.** The transcript is the fragile input: transcript files rotate, and the
 diff a seed references drifts as the branch moves. Reading it once, at the moment it is

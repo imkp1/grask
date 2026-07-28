@@ -110,8 +110,10 @@ ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
 # can fall out of sync with the clock.
 PROBE_TTL_DAYS = 7
 
-# The five ways `next_probe` can come back with nothing. See `empty_reason`.
-EmptyReason = Literal["over_cap", "capturing", "expired", "caught_up", "never"]
+# The six ways `next_probe` can come back with nothing. See `empty_reason`.
+EmptyReason = Literal[
+    "over_cap", "capturing", "unverified", "expired", "caught_up", "never"
+]
 
 # The verdict a session carries while its capture is still running. Not a
 # triage outcome — `capture_session` writes it before the first model call and
@@ -122,12 +124,21 @@ EmptyReason = Literal["over_cap", "capturing", "expired", "caught_up", "never"]
 CAPTURING = "capturing"
 
 # How long a `capturing` row is believed. The pipeline's worst case is triage
-# (180s) plus seed (180s) plus probe's three attempts (540s) = 15 minutes, so
-# anything older than this is a worker that died without writing its verdict —
-# a crash, a reboot, a `kill`. Past the window the row stops claiming a probe is
-# coming and stops blocking a re-capture of the same transcript, because a
-# marker with no way out is how a queue jams permanently.
-CAPTURE_STALE_MINUTES = 20
+# (180s) plus seed (180s) plus probe's three attempts (540s) plus verify's three
+# (540s) = 24 minutes, so anything older than this is a worker that died without
+# writing its verdict — a crash, a reboot, a `kill`. Past the window the row
+# stops claiming a probe is coming and stops blocking a re-capture of the same
+# transcript, because a marker with no way out is how a queue jams permanently.
+CAPTURE_STALE_MINUTES = 30
+
+# The verdict a session carries when stage 4 read the question grask wrote for
+# it and would not vouch for the answer key. A terminal verdict like `silent`
+# and `error`, and deliberately neither of them: the session was worth asking
+# about (triage said `ask`, and the seed is stored) and nothing malfunctioned.
+# It shares `PROBE_TTL_DAYS` rather than the capture window because it is not a
+# transient state — it is a fact about a session, and it stops being worth
+# mentioning at the same age as the probes it would have competed with.
+UNVERIFIED = "unverified"
 
 
 def _pending_from_row(row: sqlite3.Row) -> PendingProbe:
@@ -408,6 +419,12 @@ class Store:
           only other reason that is temporary: the queue is not empty so much as
           not yet full, and every other note here would tell the developer to go
           end another session — the one action that does not help.
+        - `unverified`: a session recently produced a question and stage 4
+          discarded it. Third for the same reason `capturing` is second — it is
+          a queue that is empty for a reason particular to this session, and
+          every note below it would tell the developer to go end another
+          session, which here is in fact the right advice but only once they
+          know the last one is not still coming.
         - `expired`: probes were raised and went unasked past `PROBE_TTL_DAYS`.
         - `caught_up`: probes exist and none is still waiting.
         - `never`: no probe has ever been written.
@@ -427,11 +444,14 @@ class Store:
             "     AND json_array_length(p.options) > :cap) AS over_cap,"
             "  (SELECT COUNT(*) FROM sessions WHERE verdict = :capturing"
             "     AND triaged_at >= :stale) AS capturing,"
+            "  (SELECT COUNT(*) FROM sessions WHERE verdict = :unverified"
+            "     AND triaged_at >= :cutoff) AS unverified,"
             f"  (SELECT COUNT(*) {unasked} AND p.created_at < :cutoff) AS expired",
             {
                 "cutoff": cutoff,
                 "cap": max_options,
                 "capturing": CAPTURING,
+                "unverified": UNVERIFIED,
                 "stale": self._capture_cutoff(),
             },
         ).fetchone()
@@ -440,6 +460,8 @@ class Store:
             return "over_cap"
         if row["capturing"]:
             return "capturing"
+        if row["unverified"]:
+            return "unverified"
         if row["expired"]:
             return "expired"
         return "caught_up" if row["total"] else "never"

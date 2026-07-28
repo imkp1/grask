@@ -5,7 +5,7 @@ single fact decides the error handling: an exception here reaches no one, so
 every failure has to become a row and a log line instead. `capture_session` does
 not raise. If it ever does, a session ends and grask silently forgets it.
 
-Order is extract → triage → seed → probe, cheapest first. Stage 0 is free and
+Order is extract → triage → seed → probe → verify, cheapest first. Stage 0 is free and
 filters sessions with no human in them; triage is one call and filters the
 majority; only what survives both pays for stages 2 and 3.
 """
@@ -18,12 +18,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from grask.dialogue import extract_dialogue as _extract_dialogue
+from grask.llm import LLMError
 from grask.probe import probe as _probe
 from grask.seed import seed as _seed
 from grask.select import select
-from grask.storage import Store, grask_home
+from grask.storage import UNVERIFIED, Store, grask_home
 from grask.transcript import extract
 from grask.triage import triage as _triage
+from grask.verify import ProbeUnverified
+from grask.verify import verify as _verify
 
 
 def log(message: str) -> None:
@@ -45,6 +48,7 @@ def capture_session(
     triage=_triage,
     seed=_seed,
     probe=_probe,
+    verify=_verify,
     extract_dialogue=_extract_dialogue,
 ) -> None:
     """Triage one ended session and persist whatever it earned.
@@ -57,8 +61,8 @@ def capture_session(
         if store.has_session(session_id):
             return
 
-        # Before anything that costs time or money. The three model calls below
-        # take ~30s, and until this row exists a session that just ended is
+        # Before anything that costs time or money. The four model calls below
+        # take ~45s, and until this row exists a session that just ended is
         # indistinguishable from a session that never happened — which is how
         # `/grask` in a still-open window comes back "you're caught up" about a
         # probe that is thirty seconds from existing.
@@ -118,6 +122,34 @@ def capture_session(
         dialogue = extract_dialogue(Path(transcript_path))
         the_seed = seed(dialogue, moment)
         the_probe = probe(the_seed, dialogue)
+
+        try:
+            the_probe = verify(the_probe)
+        except ProbeUnverified as exc:
+            # A judgment, and the only thing that throws a question away. The
+            # seed is still stored — the moment was real, triage and stage 2
+            # were already paid for, and what failed is the question written on
+            # top of them.
+            log(f"{session_id} probe unverified: {exc.reason}")
+            store.record_session(
+                session_id=session.session_id,
+                transcript_path=str(transcript_path),
+                cwd=session.cwd,
+                git_branch=session.git_branch,
+                verdict=UNVERIFIED,
+                signal=verdict.signal,
+                topic=verdict.topic,
+                cost_usd=verdict.cost_usd,
+                duration_ms=verdict.duration_ms,
+            )
+            store.add_seed(the_seed)
+            return
+        except LLMError as exc:
+            # A call failure, and it keeps the probe. Verification is a check on
+            # a question that already exists; a CLI that cannot run it has said
+            # nothing about that question, and treating silence as a rejection
+            # would empty the queue every time the model was unreachable.
+            log(f"{session_id} verification unavailable, probe kept: {exc}")
 
         store.record_session(
             session_id=session.session_id,

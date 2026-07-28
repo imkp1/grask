@@ -10,6 +10,7 @@ exception it lets escape is a failure nobody ever learns about.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,7 @@ from grask.probe import Probe, Rubric
 from grask.seed import Seed
 from grask.storage import Store
 from grask.triage import Moment, TriageVerdict
+from grask.verify import ProbeUnverified
 
 
 @pytest.fixture
@@ -196,6 +198,7 @@ def test_ask_verdict_stores_session_seed_and_probe(store: Store, tmp_path: Path)
         triage=lambda session: ask_verdict(),
         seed=lambda dialogue, moment: a_seed(),
         probe=lambda seed, dialogue: a_probe(),
+        verify=lambda probe: probe,
     )
 
     assert counts(store) == (1, 1, 1)
@@ -203,6 +206,96 @@ def test_ask_verdict_stores_session_seed_and_probe(store: Store, tmp_path: Path)
     assert row["verdict"] == "ask"
     assert row["signal"] == "asked_why"
     assert row["topic"] == "idempotency of the retry path"
+
+
+class TestVerificationGuardsTheQueue:
+    """Stage 4 decides whether a written probe reaches the developer.
+
+    The asymmetry pinned here is the whole point: a *judgment* that the key does
+    not survive throws the probe away, while a *call failure* keeps it. Collapse
+    the two and a broken CLI silently empties the queue, which looks exactly
+    like grask having nothing to ask.
+    """
+
+    def test_a_verified_probe_is_stored(self, store: Store, tmp_path: Path):
+        capture_session(
+            transcript(tmp_path, "why do we need an idempotency key here?"),
+            store,
+            triage=lambda session: ask_verdict(),
+            seed=lambda dialogue, moment: a_seed(),
+            probe=lambda seed, dialogue: a_probe(),
+            verify=lambda probe: probe,
+        )
+
+        assert counts(store) == (1, 1, 1)
+        assert store.conn.execute("SELECT verdict FROM sessions").fetchone()["verdict"] == "ask"
+
+    def test_an_unverified_probe_is_not_queued(self, store: Store, tmp_path: Path):
+        def reject(probe):
+            raise ProbeUnverified("two options were judged true")
+
+        capture_session(
+            transcript(tmp_path, "why do we need an idempotency key here?"),
+            store,
+            triage=lambda session: ask_verdict(),
+            seed=lambda dialogue, moment: a_seed(),
+            probe=lambda seed, dialogue: a_probe(),
+            verify=reject,
+        )
+
+        sessions, seeds, probes = counts(store)
+        assert probes == 0
+        # The seed is still worth keeping: the moment was real and the triage
+        # spend already happened. Only the question is thrown away.
+        assert (sessions, seeds) == (1, 1)
+
+    def test_an_unverified_session_says_so_rather_than_ask_or_error(
+        self, store: Store, tmp_path: Path
+    ):
+        def reject(probe):
+            raise ProbeUnverified("no option was judged true")
+
+        capture_session(
+            transcript(tmp_path, "why do we need an idempotency key here?"),
+            store,
+            triage=lambda session: ask_verdict(),
+            seed=lambda dialogue, moment: a_seed(),
+            probe=lambda seed, dialogue: a_probe(),
+            verify=reject,
+        )
+
+        assert (
+            store.conn.execute("SELECT verdict FROM sessions").fetchone()["verdict"]
+            == "unverified"
+        )
+
+    def test_a_verifier_call_failure_keeps_the_probe(self, store: Store, tmp_path: Path):
+        def broken(probe):
+            raise LLMError("claude exited 1")
+
+        capture_session(
+            transcript(tmp_path, "why do we need an idempotency key here?"),
+            store,
+            triage=lambda session: ask_verdict(),
+            seed=lambda dialogue, moment: a_seed(),
+            probe=lambda seed, dialogue: a_probe(),
+            verify=broken,
+        )
+
+        assert counts(store) == (1, 1, 1)
+        assert store.conn.execute("SELECT verdict FROM sessions").fetchone()["verdict"] == "ask"
+
+    def test_the_verified_cost_is_what_gets_stored(self, store: Store, tmp_path: Path):
+        capture_session(
+            transcript(tmp_path, "why do we need an idempotency key here?"),
+            store,
+            triage=lambda session: ask_verdict(),
+            seed=lambda dialogue, moment: a_seed(),
+            probe=lambda seed, dialogue: a_probe(),
+            verify=lambda probe: replace(probe, cost_usd=0.17),
+        )
+
+        assert store.conn.execute("SELECT cost_usd FROM probes").fetchone()[0] == 0.17
 
 
 class TestDurationReachesTheRow:
@@ -221,6 +314,7 @@ class TestDurationReachesTheRow:
             triage=lambda session: ask_verdict(),
             seed=lambda dialogue, moment: a_seed(),
             probe=lambda seed, dialogue: a_probe(),
+            verify=lambda probe: probe,
         )
 
         def duration(table: str) -> int | None:
@@ -292,6 +386,7 @@ def test_seed_receives_the_moment_triage_selected(store: Store, tmp_path: Path):
         triage=lambda session: ask_verdict(),
         seed=spy_seed,
         probe=lambda seed, dialogue: a_probe(),
+        verify=lambda probe: probe,
     )
 
     assert seen == {"turn": 0, "topic": "idempotency of the retry path"}
