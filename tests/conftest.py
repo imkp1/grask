@@ -14,9 +14,12 @@ per-test is the fix that works by default rather than by remembering.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
+
+import grask.llm
 
 
 @pytest.fixture(autouse=True)
@@ -30,3 +33,40 @@ def isolated_grask_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path
     """
     monkeypatch.setenv("GRASK_HOME", str(tmp_path))
     return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def no_real_model_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Refuse to shell out to the real CLI from a test.
+
+    Every stage is injectable and every test injects one, so nothing here should
+    ever reach `llm.complete`. What makes that assumption rot is a *new* stage:
+    the tests that predate it keep passing while quietly gaining a real call,
+    because they inject the stages they knew about and take the default for the
+    one they did not. That is not theoretical — it is what adding stage 4 did to
+    eight tests in this suite, at ~6s and real money each.
+
+    It refuses the `claude` binary specifically rather than every subprocess.
+    Two other launches in this suite are legitimate — `install.py` probes a
+    python version, and `capture_run.py` spawns the detached worker — and a
+    guard that also stopped those would have to be remembered around, which is
+    the property this file exists to avoid needing.
+    """
+    real = subprocess.run
+
+    def refuse(argv, *args, **kwargs):
+        if argv and str(argv[0]).endswith("claude"):
+            # `pytest.fail` and not `raise AssertionError`: an AssertionError is
+            # an ordinary Exception, and `capture_session` catches Exception on
+            # purpose — it runs detached and turns every failure into a row. It
+            # would catch this one too, and the author of the next stage would
+            # see an `error` verdict rather than a message naming the problem.
+            # `Failed` derives from BaseException, so it passes straight through.
+            pytest.fail(
+                "a test tried to make a real model call — inject the stage instead "
+                "(capture_session takes triage=, seed=, probe=, verify=)",
+                pytrace=False,
+            )
+        return real(argv, *args, **kwargs)
+
+    monkeypatch.setattr(grask.llm.subprocess, "run", refuse)
