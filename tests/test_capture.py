@@ -217,18 +217,8 @@ class TestVerificationGuardsTheQueue:
     like grask having nothing to ask.
     """
 
-    def test_a_verified_probe_is_stored(self, store: Store, tmp_path: Path):
-        capture_session(
-            transcript(tmp_path, "why do we need an idempotency key here?"),
-            store,
-            triage=lambda session: ask_verdict(),
-            seed=lambda dialogue, moment: a_seed(),
-            probe=lambda seed, dialogue: a_probe(),
-            verify=lambda probe: probe,
-        )
-
-        assert counts(store) == (1, 1, 1)
-        assert store.conn.execute("SELECT verdict FROM sessions").fetchone()["verdict"] == "ask"
+    # The surviving path is covered by `test_ask_verdict_stores_session_seed_and_probe`
+    # above and by `test_the_verified_cost_is_what_gets_stored` below.
 
     def test_an_unverified_probe_is_not_queued(self, store: Store, tmp_path: Path):
         def reject(probe):
@@ -296,6 +286,37 @@ class TestVerificationGuardsTheQueue:
         )
 
         assert store.conn.execute("SELECT cost_usd FROM probes").fetchone()[0] == 0.17
+
+    def test_a_discarded_probes_spend_is_still_recorded(self, store: Store, tmp_path: Path):
+        """Throwing the question away does not make it retrospectively free.
+
+        There is no probes row on this path, so the session row is the last
+        place the stage 3 + stage 4 spend can land. Without it the most
+        expensive part of a discarded session reads as $0.00 in the report used
+        to decide whether stage 4 earns its price.
+
+        The two columns stay separate so that `SUM(discarded_usd)` — what the
+        stage has cost to produce nothing — is exact. Merged, it could only be
+        estimated by assuming a triage cost back out.
+        """
+
+        def reject(probe):
+            raise ProbeUnverified("no option was judged true", cost_usd=0.27, duration_ms=8000)
+
+        capture_session(
+            transcript(tmp_path, "why do we need an idempotency key here?"),
+            store,
+            triage=lambda session: ask_verdict(),
+            seed=lambda dialogue, moment: a_seed(),
+            probe=lambda seed, dialogue: a_probe(),
+            verify=reject,
+        )
+
+        row = store.conn.execute("SELECT cost_usd, discarded_usd FROM sessions").fetchone()
+        assert row["discarded_usd"] == 0.27
+        # Not merged into triage's column, which is what keeps the discarded
+        # total exact rather than something you infer by subtraction.
+        assert row["cost_usd"] == 0.05
 
 
 class TestDurationReachesTheRow:

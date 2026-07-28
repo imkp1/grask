@@ -51,22 +51,35 @@ def no_real_model_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     python version, and `capture_run.py` spawns the detached worker — and a
     guard that also stopped those would have to be remembered around, which is
     the property this file exists to avoid needing.
+
+    Both `run` and `Popen` are wrapped. `llm.py` uses `run` today, but the
+    author this guard exists for is writing a stage that does not exist yet, and
+    a guard they can escape by reaching for the other spelling is a guard that
+    holds only until someone does. Everything else in `subprocess`
+    (`check_output`, `call`, `check_call`) goes through `run`, so those two
+    cover the module.
     """
-    real = subprocess.run
+    real_run = subprocess.run
+    real_popen = subprocess.Popen
 
-    def refuse(argv, *args, **kwargs):
-        if argv and str(argv[0]).endswith("claude"):
-            # `pytest.fail` and not `raise AssertionError`: an AssertionError is
-            # an ordinary Exception, and `capture_session` catches Exception on
-            # purpose — it runs detached and turns every failure into a row. It
-            # would catch this one too, and the author of the next stage would
-            # see an `error` verdict rather than a message naming the problem.
-            # `Failed` derives from BaseException, so it passes straight through.
-            pytest.fail(
-                "a test tried to make a real model call — inject the stage instead "
-                "(capture_session takes triage=, seed=, probe=, verify=)",
-                pytrace=False,
-            )
-        return real(argv, *args, **kwargs)
+    def guard(real):
+        def refuse(argv, *args, **kwargs):
+            if argv and str(argv[0]).endswith("claude"):
+                # `pytest.fail` and not `raise AssertionError`: an AssertionError
+                # is an ordinary Exception, and `capture_session` catches
+                # Exception on purpose — it runs detached and turns every
+                # failure into a row. It would catch this one too, and the
+                # author of the next stage would see an `error` verdict rather
+                # than a message naming the problem. `Failed` derives from
+                # BaseException, so it passes straight through.
+                pytest.fail(
+                    "a test tried to make a real model call — inject the stage instead "
+                    "(capture_session takes triage=, seed=, probe=, verify=)",
+                    pytrace=False,
+                )
+            return real(argv, *args, **kwargs)
 
-    monkeypatch.setattr(grask.llm.subprocess, "run", refuse)
+        return refuse
+
+    monkeypatch.setattr(grask.llm.subprocess, "run", guard(real_run))
+    monkeypatch.setattr(grask.llm.subprocess, "Popen", guard(real_popen))

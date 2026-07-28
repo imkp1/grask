@@ -9,6 +9,7 @@ which is exactly the kind of signal nobody reads.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,27 @@ from grask.storage import Store
 def test_a_real_model_call_from_a_test_is_refused():
     with pytest.raises(BaseException, match="real model call"):
         complete("what is the airspeed velocity of an unladen swallow?")
+
+
+def test_the_other_spelling_is_refused_too():
+    """`llm.py` uses `run`, but the stage this guard is for is not written yet.
+
+    A guard escapable by reaching for `Popen` holds only until someone reaches
+    for `Popen`. `check_output` and friends route through `run`, so wrapping the
+    two covers the module.
+    """
+    with pytest.raises(BaseException, match="real model call"):
+        subprocess.Popen(["/usr/local/bin/claude", "-p", "hi"])
+
+    with pytest.raises(BaseException, match="real model call"):
+        subprocess.check_output(["claude", "-p", "hi"])
+
+
+def test_a_subprocess_that_is_not_the_model_still_runs():
+    """`install.py` probes a python version and `capture_run.py` spawns the
+    detached worker. A guard those had to be remembered around is the thing
+    this file exists to avoid needing."""
+    assert subprocess.run(["echo", "ok"], capture_output=True, text=True).stdout.strip() == "ok"
 
 
 def test_the_refusal_survives_captures_error_containment(tmp_path: Path):

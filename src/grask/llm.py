@@ -24,14 +24,14 @@ DEFAULT_TIMEOUT = 180
 # `--tools ""` rather than `--disallowed-tools <list>`: both refuse the same
 # calls, but a disallowed tool is a tool the model was still *told about*.
 # Measured on a trivial prompt, warm cache: 8,918 -> 5,585 input tokens and
-# $0.0048 -> $0.0031, reproduced across runs. Three calls per capture, so ~10k
+# $0.0048 -> $0.0031, reproduced across runs. Four calls per capture, so ~13k
 # tokens a session for definitions nothing was allowed to use.
 #
 # It buys tokens, not seconds. The first measurement appeared to show 0.6s off
 # the wall too; at n=3 the same two times turn up swapped between the arms, so
 # that was API variance (+/-700ms call to call) and not this flag. Capture's
-# ~30s is three sequential model calls on a ~15k-token dialogue, and no flag
-# here touches that.
+# ~45s is four sequential model calls, three of them on a ~15k-token dialogue,
+# and no flag here touches that.
 NO_TOOLS = ("--tools", "")
 
 # Each `-p` call is itself a session, and a persisted session is a transcript on

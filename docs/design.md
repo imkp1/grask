@@ -576,7 +576,7 @@ where a skip is a signal the developer showed up and found nothing worth their t
 
 ## Capture
 
-Claude Code `SessionEnd` hook. Reads the transcript, runs four stages cheapest-first, writes
+Claude Code `SessionEnd` hook. Reads the transcript, runs five stages cheapest-first, writes
 what survives, exits. Fails silently.
 
 ### Five stages, one invocation
@@ -618,7 +618,9 @@ there is no cost side to this tradeoff.
 the key, the explanation, the seed, or the transcript, and judge each option true or false on
 its own with a stated reason. The probe survives only if exactly one option is true and it is
 the stored key. Anything else — two true, none true, one true that is not the key — discards
-the question and records the session `unverified`.
+the question and records the session `unverified` — a state `/grask` reports only while no
+later session has minted a probe, because "the last question was thrown away" stops being
+true the moment a newer one is not.
 
 **Why a check and not more prompt.** Stage 3 writes the question, all four options, the key,
 and the explanation in one call, in sequence, and never re-reads an early option against a
@@ -651,6 +653,17 @@ silence as rejection would empty the queue every time the model was unreachable.
 options. $0.041 per probe against a $0.226 stage 3 baseline, or about +10% on a kept
 session's $0.51 — the invariant that keeps it affordable is that exactly one call per probe
 carries the dialogue, and the rendered dialogue is 92% of stage 3's prompt.
+
+**A discard is not free, and the row says so.** There is no probes row on this path, so
+stage 3 and stage 4's spend has nowhere to live — and the report that decides whether stage 4
+earns its price is the one that would have shown it as $0.00. `sessions.discarded_usd` holds
+it, beside `cost_usd` rather than inside it, for exactly one reason: `SUM(discarded_usd)` is
+what this stage has spent to produce nothing, and that is the number that decides whether it
+is kept, tuned, or reverted. Merged into `cost_usd` it could not be recovered — separating it
+back out would mean subtracting a per-session triage cost that is no longer stored anywhere.
+The tidier-sounding argument, that `cost_usd` must stay summable as triage spend, is not the
+reason and was not true when it was first written down: nothing reads that column as
+triage-only. One column, one question that needs an exact answer.
 
 **What it cannot check.** The judge has no repository, so it can only adjudicate claims that
 are true away from this checkout. A probe whose answer turns on the contents of a local file
@@ -861,8 +874,9 @@ remembers the demotion for the rest of the process.
 
 **None of it is a latency fix, and the measurement said so.** A first run appeared to show
 `--tools ""` taking 0.6s off the wall; at n=3 the same two times turned up swapped between the
-arms. That was API variance (±700ms call to call), not the flag. Capture's ~30s is three
-sequential model calls over a ~15k-token dialogue and no flag here touches it — the only
+arms. That was API variance (±700ms call to call), not the flag. Capture's ~45s is four
+sequential model calls, three of them over a ~15k-token dialogue, and no flag here touches
+it — the only
 lever left is structural (merging stages 2 and 3 into one call), which would trade the
 quote-verification boundary between them for about ten seconds, and is not taken.
 

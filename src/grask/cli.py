@@ -63,8 +63,8 @@ TERMINAL_EMPTY_NOTES = {
         "about forty-five seconds. try again shortly."
     ),
     "unverified": (
-        f"{NOTHING_PENDING} the last session's question did not survive its own "
-        "check — grask wrote it, could not confirm the answer key, and threw it "
+        f"{NOTHING_PENDING} the last question grask wrote did not survive its "
+        "own check — it could not confirm the answer key, and threw the question "
         "away rather than grade you against it."
     ),
     "expired": (
@@ -141,8 +141,8 @@ EMPTY_QUEUE_NOTES = {
         "shortly. Do not end another session to hurry it along."
     ),
     "unverified": (
-        "Nothing is queued. grask wrote a question from your last session and "
-        "discarded it: a second pass reads the options without knowing which is "
+        "Nothing is queued. The last question grask wrote was discarded before "
+        "it reached you: a second pass reads the options without knowing which is "
         "the key, and it could not confirm that exactly one of them was true. A "
         "question graded against an answer key that might be wrong is worse than "
         f"no question. Nothing is broken and nothing needs doing. {MORE_LATER}"

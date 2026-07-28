@@ -46,11 +46,26 @@ class ProbeUnverified(LLMError):
     A subclass of `LLMError` so that a caller which only knows "stage 4 failed"
     still handles it, but a distinct type because the two failures have opposite
     consequences: this discards the probe, a plain `LLMError` keeps it.
+
+    It carries the spend as well as the reason. A discarded probe leaves no
+    probes row, so this exception is the only thing that ever knows what stages
+    3 and 4 cost on a question nobody will be asked — and money spent on a
+    question that was thrown away is still money spent. `verify` fills both in
+    on the way past; `adjudicate`, which has no idea what anything cost, leaves
+    them None.
     """
 
-    def __init__(self, reason: str) -> None:
+    def __init__(
+        self,
+        reason: str,
+        *,
+        cost_usd: float | None = None,
+        duration_ms: int | None = None,
+    ) -> None:
         super().__init__(reason)
         self.reason = reason
+        self.cost_usd = cost_usd
+        self.duration_ms = duration_ms
 
 
 @dataclass(frozen=True)
@@ -120,17 +135,28 @@ def parse_verdicts(text: str, expected: int) -> tuple[Verdict, ...]:
     Position is the fallback for `index`: the model is asked for the array in
     order, and an off-by-one in a field it filled in by hand should not cost a
     probe when the ordering already carries the same information.
+
+    The fallback is all-or-nothing, and that is the point. Trusting each `index`
+    on its own is only safe while they are distinct: a response that labels
+    every element `"index": 0` is individually in range and collectively
+    meaningless, and reading it literally moves the true verdict onto option 0
+    — which discards a perfectly good probe for disagreeing with a key it never
+    actually disagreed with. So the indices are accepted only as a set: a
+    permutation of the options, or position throughout.
     """
     parsed = extract_json_array(text, salvage_keys=VERDICT_KEYS)
 
     if len(parsed) != expected:
         raise LLMError(f"judged {len(parsed)} of {expected} options")
 
+    claimed = [item.get("index") for item in parsed]
+    whole = sorted(i for i in claimed if isinstance(i, int) and not isinstance(i, bool))
+    permutation = whole == list(range(expected))
+
     verdicts = []
     for position, item in enumerate(parsed):
-        index = item.get("index")
-        if not isinstance(index, int) or isinstance(index, bool) or not 0 <= index < expected:
-            index = position
+        raw = claimed[position]
+        index = raw if permutation and isinstance(raw, int) else position
 
         reason = item.get("reason")
         if not isinstance(reason, str) or not reason.strip():
@@ -168,9 +194,14 @@ def verify(probe: Probe, *, complete=complete, attempts: int = MAX_ATTEMPTS) -> 
     would be rolling the dice until the probe passes, which is the same rubber
     stamp the transcript-free signature exists to prevent — the first honest
     answer is the answer.
+
+    A surviving probe comes back with stage 4 folded into *both* `cost_usd` and
+    `duration_ms`. Two columns on one row that covered different sets of stages
+    would be two numbers nobody could put beside each other.
     """
     prompt = build_prompt(probe)
     spent = probe.cost_usd or 0.0
+    elapsed = probe.duration_ms or 0
     last: LLMError | None = None
 
     for _ in range(attempts):
@@ -181,6 +212,7 @@ def verify(probe: Probe, *, complete=complete, attempts: int = MAX_ATTEMPTS) -> 
             continue
 
         spent += completion.cost_usd or 0.0
+        elapsed += completion.duration_ms or 0
 
         try:
             verdicts = parse_verdicts(completion.text, len(probe.options))
@@ -188,7 +220,16 @@ def verify(probe: Probe, *, complete=complete, attempts: int = MAX_ATTEMPTS) -> 
             last = exc
             continue
 
-        adjudicate(probe, verdicts)
-        return replace(probe, cost_usd=spent)
+        try:
+            adjudicate(probe, verdicts)
+        except ProbeUnverified as exc:
+            # The judgment discards the probe; the spend behind it happened
+            # anyway. This is the only scope holding both, and past here there
+            # is no probes row left to write the number on.
+            exc.cost_usd = spent
+            exc.duration_ms = elapsed
+            raise
+
+        return replace(probe, cost_usd=spent, duration_ms=elapsed)
 
     raise last if last else LLMError("verification exhausted its attempts without an error")

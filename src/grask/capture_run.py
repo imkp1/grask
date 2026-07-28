@@ -138,25 +138,36 @@ def outcomes(store: Store, session_ids: Sequence[str]) -> str:
         return "Nothing ran."
     marks = ",".join("?" * len(session_ids))
     verdicts = store.conn.execute(
-        f"SELECT verdict, COUNT(*) n, SUM(COALESCE(cost_usd, 0)) c "
+        f"SELECT verdict, COUNT(*) n,"
+        f" SUM(COALESCE(cost_usd, 0) + COALESCE(discarded_usd, 0)) c "
         f"FROM sessions WHERE session_id IN ({marks}) GROUP BY verdict",
         tuple(session_ids),
     ).fetchall()
     probes = store.conn.execute(
-        f"SELECT COUNT(*) n, SUM(COALESCE(p.cost_usd, 0) + COALESCE(s.cost_usd, 0)) c "
+        f"SELECT COUNT(*) n, SUM(COALESCE(p.cost_usd, 0)) c "
         f"FROM probes p JOIN seeds s ON s.id = p.seed_id "
         f"WHERE s.session_id IN ({marks})",
         tuple(session_ids),
     ).fetchone()
+    # Seeds are summed on their own rather than through the probes join. A
+    # session whose probe failed verification has a seed and no probe, so the
+    # join drops it — which quietly excused stage 2's spend on exactly the
+    # sessions that also spent the most and produced the least.
+    seeds = store.conn.execute(
+        f"SELECT SUM(COALESCE(cost_usd, 0)) c FROM seeds WHERE session_id IN ({marks})",
+        tuple(session_ids),
+    ).fetchone()
 
-    spent = sum(row["c"] or 0.0 for row in verdicts) + (probes["c"] or 0.0)
+    spent = (
+        sum(row["c"] or 0.0 for row in verdicts) + (probes["c"] or 0.0) + (seeds["c"] or 0.0)
+    )
     lines = [
         "=" * 72,
         f"CAPTURED {len(session_ids)} sessions",
         "=" * 72,
     ]
     for row in sorted(verdicts, key=lambda r: -r["n"]):
-        lines.append(f"  {row['verdict']:<8} {row['n']:>4d}   ${row['c'] or 0.0:.2f}")
+        lines.append(f"  {row['verdict']:<10} {row['n']:>4d}   ${row['c'] or 0.0:.2f}")
     lines += [
         "",
         f"  probes minted  {probes['n']:>4d}",
@@ -164,8 +175,9 @@ def outcomes(store: Store, session_ids: Sequence[str]) -> str:
     ]
     if not probes["n"]:
         lines.append("")
-        lines.append("  No probes. Either triage kept nothing or every kept session errored —")
-        lines.append("  check grask.log before spending on a second batch.")
+        lines.append("  No probes. Either triage kept nothing, every kept session errored, or")
+        lines.append("  stage 4 discarded every question it was given — the `unverified` count")
+        lines.append("  above says which. Check grask.log before spending on a second batch.")
     return "\n".join(lines)
 
 

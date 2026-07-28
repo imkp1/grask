@@ -53,6 +53,15 @@ def judgment(*verdicts: bool, reason: str = "because") -> str:
     )
 
 
+def as_written(probe: Probe) -> Probe:
+    """The verified probe with stage 4's meter reset, for comparing to `PROBE`.
+
+    Verification adds to `cost_usd` and `duration_ms` and must leave everything
+    else alone; resetting both is how "everything else" gets asserted.
+    """
+    return replace(probe, cost_usd=PROBE.cost_usd, duration_ms=PROBE.duration_ms)
+
+
 def replies(*texts: str, cost: float = 0.04):
     """A `complete` stub that returns each text in turn."""
     queue = list(texts)
@@ -73,6 +82,21 @@ class TestParseVerdicts:
     def test_falls_back_to_position_when_index_is_missing(self):
         text = json.dumps([{"true": True, "reason": "r"}, {"true": False, "reason": "r"}])
         assert [v.index for v in parse_verdicts(text, 2)] == [0, 1]
+
+    def test_falls_back_to_position_when_the_indices_are_not_a_permutation(self):
+        # Every element in range and every element the same. Read literally this
+        # moves the true verdict onto option 0 and discards a probe for
+        # disagreeing with a key it never disagreed with.
+        text = json.dumps([{"index": 0, "true": i == 2, "reason": "r"} for i in range(4)])
+        parsed = parse_verdicts(text, 4)
+        assert [v.index for v in parsed] == [0, 1, 2, 3]
+        assert [v.index for v in parsed if v.true] == [2]
+
+    def test_keeps_a_permutation_the_model_wrote_out_of_order(self):
+        text = json.dumps(
+            [{"index": i, "true": i == 3, "reason": "r"} for i in (2, 0, 3, 1)]
+        )
+        assert [v.index for v in parse_verdicts(text, 4) if v.true] == [3]
 
     def test_rejects_a_judgment_that_skips_an_option(self):
         with pytest.raises(LLMError):
@@ -115,7 +139,7 @@ class TestPrompt:
 class TestVerify:
     def test_a_probe_whose_key_is_the_only_true_option_survives(self):
         verified = verify(PROBE, complete=replies(judgment(False, False, True, False)))
-        assert replace(verified, cost_usd=PROBE.cost_usd) == PROBE
+        assert as_written(verified) == PROBE
 
     def test_two_true_options_are_unverified(self):
         with pytest.raises(ProbeUnverified, match="2 options"):
@@ -139,10 +163,26 @@ class TestVerify:
         verified = verify(PROBE, complete=replies(judgment(False, False, True, False), cost=0.04))
         assert verified.cost_usd == pytest.approx(0.26)
 
+    def test_verification_duration_is_added_to_the_probe(self):
+        # Cost and duration have to cover the same stages. Two columns on one
+        # row that counted different halves of the pipeline are two numbers
+        # nobody can put beside each other.
+        verified = verify(PROBE, complete=replies(judgment(False, False, True, False)))
+        assert verified.duration_ms == (PROBE.duration_ms or 0) + 10
+
+    def test_a_discarded_probe_reports_what_it_cost(self):
+        # No probes row survives this path, so the exception is the only thing
+        # that ever knows what stages 3 and 4 spent to reach the judgment.
+        with pytest.raises(ProbeUnverified) as caught:
+            verify(PROBE, complete=replies(judgment(False, False, False, False), cost=0.04))
+
+        assert caught.value.cost_usd == pytest.approx(0.26)
+        assert caught.value.duration_ms == 10
+
     def test_an_unparseable_judgment_is_retried(self):
         stub = replies("not json at all", judgment(False, False, True, False))
         verified = verify(PROBE, complete=stub)
-        assert replace(verified, cost_usd=PROBE.cost_usd) == PROBE
+        assert as_written(verified) == PROBE
         assert len(stub.prompts) == 2
 
     def test_cost_counts_the_attempts_that_failed(self):

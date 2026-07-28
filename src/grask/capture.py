@@ -5,9 +5,9 @@ single fact decides the error handling: an exception here reaches no one, so
 every failure has to become a row and a log line instead. `capture_session` does
 not raise. If it ever does, a session ends and grask silently forgets it.
 
-Order is extract → triage → seed → probe → verify, cheapest first. Stage 0 is free and
-filters sessions with no human in them; triage is one call and filters the
-majority; only what survives both pays for stages 2 and 3.
+Order is extract → triage → seed → probe → verify, cheapest first. Stage 0 is
+free and filters sessions with no human in them; triage is one call and filters
+the majority; only what survives both pays for stages 2, 3 and 4.
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ def capture_session(
         # take ~45s, and until this row exists a session that just ended is
         # indistinguishable from a session that never happened — which is how
         # `/grask` in a still-open window comes back "you're caught up" about a
-        # probe that is thirty seconds from existing.
+        # probe that is forty-five seconds from existing.
         store.begin_session(session_id=session_id, transcript_path=str(transcript_path))
 
         session = extract(Path(transcript_path))
@@ -130,6 +130,13 @@ def capture_session(
             # seed is still stored — the moment was real, triage and stage 2
             # were already paid for, and what failed is the question written on
             # top of them.
+            #
+            # `discarded_usd` is what stages 3 and 4 cost to reach that
+            # judgment. Nothing else records it: there is no probes row on this
+            # path, so without the column the most expensive half of a
+            # discarded session reads as free — in the very report used to
+            # decide whether this stage is worth its price. Kept apart from
+            # `cost_usd` so that total stays exact rather than inferred.
             log(f"{session_id} probe unverified: {exc.reason}")
             store.record_session(
                 session_id=session.session_id,
@@ -141,6 +148,7 @@ def capture_session(
                 topic=verdict.topic,
                 cost_usd=verdict.cost_usd,
                 duration_ms=verdict.duration_ms,
+                discarded_usd=exc.cost_usd,
             )
             store.add_seed(the_seed)
             return

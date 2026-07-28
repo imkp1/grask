@@ -707,6 +707,49 @@ class TestEmptyReason:
 
         assert store.empty_reason() == "capturing"
 
+    def test_a_later_probe_retires_an_unverified_session_as_the_reason(self, store: Store):
+        """Answering a newer probe means the discard is no longer the last word.
+
+        Age alone was not enough. `unverified` outranks `caught_up`, so a single
+        discard suppressed "you are caught up" for the whole seven days — the
+        developer who then earned a probe and answered it was still told the
+        queue was empty because a question had been thrown away, about a session
+        that was no longer the last one.
+        """
+        store.record_session(
+            session_id="one",
+            transcript_path="/tmp/one.jsonl",
+            cwd="/repo",
+            git_branch="main",
+            verdict="unverified",
+        )
+        probe_id = self.stored(store, session_id="two", created_at=iso_days_ago(0))
+        store.conn.execute(
+            "INSERT INTO asks (probe_id, asked_at, outcome, turns) VALUES (?, ?, ?, ?)",
+            (probe_id, iso_days_ago(0), "correct", 1),
+        )
+        store.conn.commit()
+
+        assert store.next_probe() is None
+        assert store.empty_reason() == "caught_up"
+
+    def test_an_unverified_session_after_the_last_probe_is_still_the_reason(self, store: Store):
+        """The other side of the same rule: newer than every probe, so it stands."""
+        self.stored(store, session_id="two", created_at=iso_days_ago(3))
+        store.record_session(
+            session_id="one",
+            transcript_path="/tmp/one.jsonl",
+            cwd="/repo",
+            git_branch="main",
+            verdict="unverified",
+        )
+        store.conn.execute("DELETE FROM asks")
+        store.conn.execute("UPDATE probes SET options = NULL")
+        store.conn.commit()
+
+        assert store.next_probe() is None
+        assert store.empty_reason() == "unverified"
+
     def test_an_unverified_session_does_not_hide_a_servable_probe(self, store: Store):
         """`empty_reason` only ever explains an empty queue; a pending probe
         must still be the thing that happens."""
