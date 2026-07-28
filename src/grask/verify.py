@@ -47,12 +47,11 @@ class ProbeUnverified(LLMError):
     still handles it, but a distinct type because the two failures have opposite
     consequences: this discards the probe, a plain `LLMError` keeps it.
 
-    It carries the spend as well as the reason. A discarded probe leaves no
-    probes row, so this exception is the only thing that ever knows what stages
-    3 and 4 cost on a question nobody will be asked — and money spent on a
-    question that was thrown away is still money spent. `verify` fills both in
-    on the way past; `adjudicate`, which has no idea what anything cost, leaves
-    them None.
+    It carries the spend as well as the reason, inherited from `LLMError`: a
+    discarded probe leaves no probes row, so this exception is the only thing
+    that ever knows what stages 3 and 4 cost on a question nobody will be asked.
+    `verify` fills it in on the way past; `adjudicate`, which has no idea what
+    anything cost, leaves it None.
     """
 
     def __init__(
@@ -62,10 +61,8 @@ class ProbeUnverified(LLMError):
         cost_usd: float | None = None,
         duration_ms: int | None = None,
     ) -> None:
-        super().__init__(reason)
+        super().__init__(reason, cost_usd=cost_usd, duration_ms=duration_ms)
         self.reason = reason
-        self.cost_usd = cost_usd
-        self.duration_ms = duration_ms
 
 
 @dataclass(frozen=True)
@@ -232,4 +229,10 @@ def verify(probe: Probe, *, complete=complete, attempts: int = MAX_ATTEMPTS) -> 
 
         return replace(probe, cost_usd=spent, duration_ms=elapsed)
 
-    raise last if last else LLMError("verification exhausted its attempts without an error")
+    # Exhausting the budget keeps the probe — but stage 3's spend is inside
+    # `spent`, and a caller that keeps the probe still has to record what
+    # getting here cost.
+    failed = last if last else LLMError("verification exhausted its attempts without an error")
+    failed.cost_usd = spent
+    failed.duration_ms = elapsed
+    raise failed

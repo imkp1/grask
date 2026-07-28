@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
@@ -170,6 +171,29 @@ def _pending_from_row(row: sqlite3.Row) -> PendingProbe:
         rubric=Rubric(topic=row["topic"], hypothesis=row["hypothesis"]),
         created_at=row["created_at"],
     )
+
+
+def _json_list(raw: str | None) -> list[str]:
+    """A stored JSON array of strings, or nothing.
+
+    Same defensiveness as `_pending_from_row`: a seed whose quotes will not
+    parse is still a seed worth re-asking, and stage 3 tolerates an empty list
+    where it would not tolerate a crash on the way in.
+    """
+    try:
+        loaded = json.loads(raw or "")
+    except (TypeError, ValueError):
+        return []
+    return [item for item in loaded if isinstance(item, str)] if isinstance(loaded, list) else []
+
+
+@dataclass(frozen=True)
+class UnprobedSeed:
+    """A stored seed with no question written from it, and where to find its dialogue."""
+
+    seed_id: int
+    seed: Seed
+    transcript_path: Path
 
 
 def grask_home() -> Path:
@@ -547,6 +571,55 @@ class Store:
                 )
 
         return ask_id
+
+    def unprobed_seeds(self, *, within_days: int = PROBE_TTL_DAYS) -> list[UnprobedSeed]:
+        """Seeds that never got a question, newest first.
+
+        Two paths leave one behind: stage 4 discarding what stage 3 wrote, and
+        stage 2 succeeding into a stage 3 that gave up. Both keep the seed on
+        purpose — the moment was real and the hypothesis is as good as it would
+        have been had the rest worked — but until `reprobe` nothing could pick
+        one back up, which made "the seed is still stored" a claim with no
+        redemption behind it.
+
+        Bounded by `within_days` because stage 3 needs the dialogue, not just
+        the seed: re-asking a seed whose probe would be born expired spends a
+        model call on a question `next_probe` will never serve.
+
+        `transcript_path` comes back unchecked. Transcripts rotate, and whether
+        this one still exists is a filesystem question the caller has to ask at
+        the moment it reads the file anyway.
+        """
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=within_days)).isoformat()
+        rows = self.conn.execute(
+            "SELECT s.id, s.session_id, s.turn, s.signal, s.topic, s.quotes, s.refs,"
+            "  s.decision, s.hypothesis, s.cost_usd, s.duration_ms, ss.transcript_path"
+            " FROM seeds s"
+            " JOIN sessions ss ON ss.session_id = s.session_id"
+            " LEFT JOIN probes p ON p.seed_id = s.id"
+            " WHERE p.id IS NULL AND s.created_at >= :cutoff"
+            " ORDER BY s.created_at DESC, s.id DESC",
+            {"cutoff": cutoff},
+        ).fetchall()
+        return [
+            UnprobedSeed(
+                seed_id=row["id"],
+                transcript_path=Path(row["transcript_path"]),
+                seed=Seed(
+                    session_id=row["session_id"],
+                    turn=row["turn"],
+                    signal=row["signal"],
+                    topic=row["topic"],
+                    quotes=tuple(_json_list(row["quotes"])),
+                    refs=tuple(_json_list(row["refs"])),
+                    decision=row["decision"],
+                    hypothesis=row["hypothesis"],
+                    cost_usd=row["cost_usd"],
+                    duration_ms=row["duration_ms"],
+                ),
+            )
+            for row in rows
+        ]
 
     def add_probe(self, seed_id: int, probe: Probe) -> int:
         """Store the question, its shuffled options, and the answer key.

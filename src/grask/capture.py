@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import sys
 import traceback
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -120,8 +121,37 @@ def capture_session(
             raise RuntimeError("verdict is 'ask' but no moment survives selection")
 
         dialogue = extract_dialogue(Path(transcript_path))
-        the_seed = seed(dialogue, moment)
-        the_probe = probe(the_seed, dialogue)
+
+        the_seed = None
+        try:
+            the_seed = seed(dialogue, moment)
+            the_probe = probe(the_seed, dialogue)
+        except LLMError as exc:
+            # Stage 2 or 3 gave up. This used to fall through to the catch-all
+            # below, which writes an `error` row with no cost and no seed —
+            # three model calls' worth of spend recorded as $0.00, on the most
+            # ordinary failure the pipeline has (probe exhausting its retries).
+            #
+            # The seed is stored whenever stage 2 got one. It is not a partial
+            # result: the moment was real and the hypothesis is as good as it
+            # would have been had stage 3 succeeded. `reprobe` is what picks it
+            # back up.
+            log(f"{session_id} stage {'3' if the_seed else '2'} failed: {exc}")
+            store.record_session(
+                session_id=session.session_id,
+                transcript_path=str(transcript_path),
+                cwd=session.cwd,
+                git_branch=session.git_branch,
+                verdict="error",
+                signal=verdict.signal,
+                topic=verdict.topic,
+                cost_usd=verdict.cost_usd,
+                duration_ms=verdict.duration_ms,
+                discarded_usd=exc.cost_usd,
+            )
+            if the_seed is not None:
+                store.add_seed(the_seed)
+            return
 
         try:
             the_probe = verify(the_probe)
@@ -157,7 +187,13 @@ def capture_session(
             # a question that already exists; a CLI that cannot run it has said
             # nothing about that question, and treating silence as a rejection
             # would empty the queue every time the model was unreachable.
+            #
+            # The attempts still cost something, and the probe row is where
+            # that lands — keeping the question does not make the failed
+            # verification free.
             log(f"{session_id} verification unavailable, probe kept: {exc}")
+            if exc.cost_usd is not None:
+                the_probe = replace(the_probe, cost_usd=exc.cost_usd)
 
         store.record_session(
             session_id=session.session_id,

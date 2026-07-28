@@ -319,6 +319,91 @@ class TestVerificationGuardsTheQueue:
         assert row["cost_usd"] == 0.05
 
 
+class TestAStageThatGaveUpStillReportsWhatItSpent:
+    """Stage 2 and 3 raise `LLMError`; nothing used to catch it.
+
+    It fell to `capture_session`'s catch-all, which writes an `error` row with
+    no cost and no seed. Probe exhausting its three attempts is the most
+    ordinary failure the pipeline has, and it recorded three billed calls as
+    $0.00 while throwing away a stage 2 result that was never the problem.
+    """
+
+    def test_a_failed_probe_keeps_the_seed_it_was_written_from(
+        self, store: Store, tmp_path: Path
+    ):
+        def exhausted(seed, dialogue):
+            raise LLMError("probe exhausted its attempts", cost_usd=0.22)
+
+        capture_session(
+            transcript(tmp_path, "why do we need an idempotency key here?"),
+            store,
+            triage=lambda session: ask_verdict(),
+            seed=lambda dialogue, moment: a_seed(),
+            probe=exhausted,
+        )
+
+        sessions, seeds, probes = counts(store)
+        assert (sessions, seeds, probes) == (1, 1, 0)
+        row = store.conn.execute("SELECT verdict, cost_usd, discarded_usd FROM sessions").fetchone()
+        assert row["verdict"] == "error"
+        assert (row["cost_usd"], row["discarded_usd"]) == (0.05, 0.22)
+
+    def test_a_failed_seed_has_no_seed_to_keep(self, store: Store, tmp_path: Path):
+        def exhausted(dialogue, moment):
+            raise LLMError("hypothesis missing or not a claim", cost_usd=0.11)
+
+        capture_session(
+            transcript(tmp_path, "why do we need an idempotency key here?"),
+            store,
+            triage=lambda session: ask_verdict(),
+            seed=exhausted,
+            probe=lambda seed, dialogue: a_probe(),
+        )
+
+        assert counts(store) == (1, 0, 0)
+        row = store.conn.execute("SELECT verdict, discarded_usd FROM sessions").fetchone()
+        assert (row["verdict"], row["discarded_usd"]) == ("error", 0.11)
+
+    def test_a_failure_that_cannot_price_itself_records_no_cost(
+        self, store: Store, tmp_path: Path
+    ):
+        """None is "not known", and must not be written as 0.0 — a CLI that
+        never started spent nothing, which is a different fact."""
+
+        def exhausted(seed, dialogue):
+            raise LLMError("claude CLI not found on PATH")
+
+        capture_session(
+            transcript(tmp_path, "why do we need an idempotency key here?"),
+            store,
+            triage=lambda session: ask_verdict(),
+            seed=lambda dialogue, moment: a_seed(),
+            probe=exhausted,
+        )
+
+        assert store.conn.execute("SELECT discarded_usd FROM sessions").fetchone()[0] is None
+
+    def test_a_kept_probe_carries_what_the_failed_verification_cost(
+        self, store: Store, tmp_path: Path
+    ):
+        """The call failure keeps the probe — it does not make the attempts free."""
+
+        def broken(probe):
+            raise LLMError("claude exited 1", cost_usd=0.30)
+
+        capture_session(
+            transcript(tmp_path, "why do we need an idempotency key here?"),
+            store,
+            triage=lambda session: ask_verdict(),
+            seed=lambda dialogue, moment: a_seed(),
+            probe=lambda seed, dialogue: a_probe(),
+            verify=broken,
+        )
+
+        assert counts(store) == (1, 1, 1)
+        assert store.conn.execute("SELECT cost_usd FROM probes").fetchone()[0] == 0.30
+
+
 class TestDurationReachesTheRow:
     """Each stage times itself; capture is the only thing that can persist it.
 

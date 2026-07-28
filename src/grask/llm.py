@@ -69,7 +69,28 @@ NO_SKILLS = ("--disable-slash-commands",)
 
 
 class LLMError(RuntimeError):
-    """The CLI failed, timed out, or returned something unparseable."""
+    """The CLI failed, timed out, or returned something unparseable.
+
+    Carries the spend behind the failure when the stage that raised it knows
+    one. A stage that gives up after three attempts was billed for all three,
+    and the exception is the only thing that leaves the stage — so a failure
+    that does not carry its cost is a failure that reads as free. `capture.py`
+    is where that lands, on a row for a session that produced nothing.
+
+    None means "not known", not "nothing", and the two are different: a CLI
+    that could not start spent nothing, while a stage nobody taught to report
+    spent something nobody counted.
+    """
+
+    def __init__(
+        self,
+        *args: object,
+        cost_usd: float | None = None,
+        duration_ms: int | None = None,
+    ) -> None:
+        super().__init__(*args)
+        self.cost_usd = cost_usd
+        self.duration_ms = duration_ms
 
 
 @dataclass

@@ -163,7 +163,10 @@ a stray keypress must not consume the question.
 There is no `grask <topic>` entry point: a hand-typed topic is the one path where the fatal
 failure — misreading code the developer actually wrote — cannot occur, so a probe validated
 that way would measure a quality that does not transfer. The corpus runner
-(`grask.capture_run`) exercises the same core against real transcripts instead.
+(`grask.capture_run`) exercises the same core against real transcripts instead, and
+`grask.reprobe` re-runs stages 3 and 4 over seeds whose question never survived. Both are
+module entry points rather than `grask` subcommands, and both spend nothing without `--go`:
+they are for whoever is developing grask, not for whoever installed it.
 
 ### Distribution
 
@@ -664,6 +667,18 @@ back out would mean subtracting a per-session triage cost that is no longer stor
 The tidier-sounding argument, that `cost_usd` must stay summable as triage spend, is not the
 reason and was not true when it was first written down: nothing reads that column as
 triage-only. One column, one question that needs an exact answer.
+
+**The seed survives, and something uses it.** A discard keeps the seed: the moment was real,
+triage and stage 2 are already paid for, and what failed is the question written on top of
+them. That is only a defence if the seed can be redeemed, so `reprobe.py` re-runs stages 3
+and 4 over seeds that have no probe — the discards, and the sessions where stage 3 gave up
+after stage 2 succeeded. Both stages again, not a shortcut past the check: these are the
+seeds most likely to fail it a second time, and a second discard is a fact about the seed
+rather than a bad roll. Explicit and cost-gated behind `--go`, for the reason `capture_run`
+is: a retry folded into the next capture would bill a decision nobody made, and a seed that
+fails twice would do it on a schedule. Bounded to `PROBE_TTL_DAYS`, because a probe born
+expired is a model call spent on something `next_probe` will never serve, and skipped
+entirely when the transcript has rotated — stage 3 needs the dialogue, not just the seed.
 
 **What it cannot check.** The judge has no repository, so it can only adjudicate claims that
 are true away from this checkout. A probe whose answer turns on the contents of a local file
