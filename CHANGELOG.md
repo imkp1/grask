@@ -6,15 +6,30 @@ SQLite schema under `GRASK_HOME` carries no migration guarantee yet.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/) once there is a 1.0 to be compatible with.
 
-## Unreleased
+## 0.1.0-rc6
 
+- **A probe's answer key is checked before the probe reaches you.** Stage 3 writes the question,
+  every option, the key and the explanation in one call, in sequence, and never re-reads an early
+  option against a later one; every failure that produces is already forbidden in its prompt, so
+  more instruction is the approach that has been tried. A fourth stage reads the options back
+  cold — no key, no explanation, no seed, no transcript, no repository — and judges each one true
+  or false. The probe survives only if exactly one is true and it is the stored key. Withholding
+  the transcript is enforced at the type level, because a judge that has seen the reasoning
+  behind an answer is the model agreeing with itself. Backtested over all 47 stored probes: 44
+  verified, 3 discarded, including a key that claimed `fault-line` normalises onto `faultline`
+  under PEP 503, which it does not. It costs $0.041 a probe, about a tenth on top of a kept
+  session. A judgment discards the question and keeps the seed; a call that could not run keeps
+  the question, because a CLI that never answered has said nothing about it, and reading silence
+  as rejection would empty the queue every time the model was unreachable. Discarded sessions get
+  a sixth empty-queue reason of their own — not `silent`, not `error` — and the spend behind a
+  thrown-away question is recorded rather than lost.
 - **A session being captured is now a state the queue can name.** Ending one window and
   running `/grask` in another said "you're caught up — more after your next session" about a
   probe that was thirty seconds from existing: capture writes nothing until all three of its
   model calls finish, so an ended session looked exactly like a session that never happened,
   and the one action the message recommended was the one that does not help. The worker now
   marks the session `capturing` before it spends anything, and both surfaces have a fifth
-  empty-queue reason that says to wait rather than to go end something. A marker older than 20
+  empty-queue reason that says to wait rather than to go end something. A marker older than 30
   minutes is a dead worker: it stops promising a probe and stops blocking a re-capture. Verdicts
   may overwrite that marker and nothing else — every other session row is still immutable, which
   is what keeps a re-fired hook from paying twice.
