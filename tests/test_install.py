@@ -210,7 +210,7 @@ def test_doctor_checks_are_structured_data(tmp_path: Path):
     assert labels == [
         "claude on PATH",
         "python3 ≥ 3.8",
-        "delivery skill present",
+        "delivery skill current",
         "capture hook wired",
     ]
     assert all(isinstance(ok, bool) for _, ok, _ in checks)
@@ -233,6 +233,45 @@ def test_doctor_passes_when_everything_is_present(tmp_path: Path, monkeypatch, c
     code = doctor(skills=skills, settings=settings)
     capsys.readouterr()
     assert code == 0
+
+
+def test_doctor_flags_a_skill_left_behind_by_an_upgrade(tmp_path: Path, monkeypatch, capsys):
+    """Present is not current, and only one of those was ever checked.
+
+    `grask install` copies the skill; upgrading the package does not re-copy it.
+    A user could run a new grask against a skill written for an older one — which
+    first mattered when stage 4 added a sixth `empty_reason` the installed copy
+    had never heard of — and doctor called it healthy.
+    """
+    skills = tmp_path / "skills"
+    settings = tmp_path / "settings.json"
+    install(skills=skills, settings=settings)
+    (skills / "grask" / "SKILL.md").write_text("an older release's skill\n", encoding="utf-8")
+    monkeypatch.setattr(install_mod.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(install_mod, "_python_version", lambda _p: (3, 12, 4))
+
+    code = doctor(skills=skills, settings=settings)
+    out = capsys.readouterr().out
+
+    assert code == 1
+    assert "stale" in out
+    assert "re-run `grask install`" in out
+
+
+def test_reinstalling_clears_the_drift(tmp_path: Path, monkeypatch, capsys):
+    """The advice doctor gives has to be the advice that works."""
+    skills = tmp_path / "skills"
+    settings = tmp_path / "settings.json"
+    install(skills=skills, settings=settings)
+    (skills / "grask" / "SKILL.md").write_text("an older release's skill\n", encoding="utf-8")
+    monkeypatch.setattr(install_mod.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(install_mod, "_python_version", lambda _p: (3, 12, 4))
+    assert doctor(skills=skills, settings=settings) == 1
+
+    install(skills=skills, settings=settings)
+
+    assert doctor(skills=skills, settings=settings) == 0
+    capsys.readouterr()
 
 
 def test_doctor_flags_a_python_older_than_the_floor(tmp_path: Path, monkeypatch, capsys):

@@ -157,7 +157,7 @@ a stray keypress must not consume the question.
 | `grask serve --json` / `grask record <id>` | Machine-readable pair behind `/grask`; also the delivery test harness. |
 | `grask skill [--install] [--dir]` | Write the `/grask` skill into a skills directory. |
 | `grask install` / `grask uninstall` | Wire (or remove) the skill and the `SessionEnd` hook in `~/.claude`. The standalone path; the plugin does the same on install. |
-| `grask doctor` | The one diagnostic — skill, hook, `claude`, and `uv`. Exit 1 on any failure. |
+| `grask doctor` | The one diagnostic — skill, hook, `claude`, and `uv`. Exit 1 on any failure. The skill is checked against the packaged copy, not just for existence: `install` copies it and an upgrade does not re-copy, so "present" was passing a skill written for an older grask. |
 | `grask-hook` | The `SessionEnd` capture trigger. Registered by `grask install` in `settings.json`, or by the plugin's `hooks.json`; never invoked by hand. |
 
 There is no `grask <topic>` entry point: a hand-typed topic is the one path where the fatal
