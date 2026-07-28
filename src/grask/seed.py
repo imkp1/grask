@@ -201,5 +201,15 @@ def seed(dialogue: Dialogue, moment: Moment) -> Seed:
     Raises `LLMError` rather than inventing a seed. Unlike triage, which must
     stay silent inside a hook, a failure here is a bug report against the prompt
     and the caller needs to see it.
+
+    A rejected seed was still a paid-for call, so the failure carries what it
+    cost. Only a parse failure can: if `complete` itself raised, the call did
+    not get far enough to have a price.
     """
-    return parse_seed(dialogue, moment, complete(build_prompt(dialogue, moment)))
+    completion = complete(build_prompt(dialogue, moment))
+    try:
+        return parse_seed(dialogue, moment, completion)
+    except LLMError as exc:
+        exc.cost_usd = completion.cost_usd
+        exc.duration_ms = completion.duration_ms
+        raise

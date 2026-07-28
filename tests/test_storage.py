@@ -660,6 +660,110 @@ class TestEmptyReason:
 
         assert store.empty_reason() == "caught_up"
 
+    def test_a_recent_session_whose_probe_failed_verification_says_so(self, store: Store):
+        """`unverified` is its own reason for the same cause `capturing` was.
+
+        Without it a session that produced a question and threw it away is
+        indistinguishable from one that never had anything worth asking — and
+        the developer is told "you're caught up" about work grask silently
+        judged unaskable.
+        """
+        store.record_session(
+            session_id="one",
+            transcript_path="/tmp/one.jsonl",
+            cwd="/repo",
+            git_branch="main",
+            verdict="unverified",
+        )
+
+        assert store.empty_reason() == "unverified"
+
+    def test_an_old_unverified_session_stops_being_the_reason(self, store: Store):
+        store.record_session(
+            session_id="one",
+            transcript_path="/tmp/one.jsonl",
+            cwd="/repo",
+            git_branch="main",
+            verdict="unverified",
+        )
+        store.conn.execute(
+            "UPDATE sessions SET triaged_at = ?", (iso_days_ago(PROBE_TTL_DAYS + 1),)
+        )
+        store.conn.commit()
+
+        assert store.empty_reason() == "never"
+
+    def test_capturing_outranks_unverified(self, store: Store):
+        """A probe still being written beats one already discarded: it is the
+        only one of the two the developer can do anything but wait for."""
+        store.record_session(
+            session_id="one",
+            transcript_path="/tmp/one.jsonl",
+            cwd="/repo",
+            git_branch="main",
+            verdict="unverified",
+        )
+        store.begin_session(session_id="two", transcript_path="/tmp/two.jsonl")
+
+        assert store.empty_reason() == "capturing"
+
+    def test_a_later_probe_retires_an_unverified_session_as_the_reason(self, store: Store):
+        """Answering a newer probe means the discard is no longer the last word.
+
+        Age alone was not enough. `unverified` outranks `caught_up`, so a single
+        discard suppressed "you are caught up" for the whole seven days — the
+        developer who then earned a probe and answered it was still told the
+        queue was empty because a question had been thrown away, about a session
+        that was no longer the last one.
+        """
+        store.record_session(
+            session_id="one",
+            transcript_path="/tmp/one.jsonl",
+            cwd="/repo",
+            git_branch="main",
+            verdict="unverified",
+        )
+        probe_id = self.stored(store, session_id="two", created_at=iso_days_ago(0))
+        store.conn.execute(
+            "INSERT INTO asks (probe_id, asked_at, outcome, turns) VALUES (?, ?, ?, ?)",
+            (probe_id, iso_days_ago(0), "correct", 1),
+        )
+        store.conn.commit()
+
+        assert store.next_probe() is None
+        assert store.empty_reason() == "caught_up"
+
+    def test_an_unverified_session_after_the_last_probe_is_still_the_reason(self, store: Store):
+        """The other side of the same rule: newer than every probe, so it stands."""
+        self.stored(store, session_id="two", created_at=iso_days_ago(3))
+        store.record_session(
+            session_id="one",
+            transcript_path="/tmp/one.jsonl",
+            cwd="/repo",
+            git_branch="main",
+            verdict="unverified",
+        )
+        store.conn.execute("DELETE FROM asks")
+        store.conn.execute("UPDATE probes SET options = NULL")
+        store.conn.commit()
+
+        assert store.next_probe() is None
+        assert store.empty_reason() == "unverified"
+
+    def test_an_unverified_session_does_not_hide_a_servable_probe(self, store: Store):
+        """`empty_reason` only ever explains an empty queue; a pending probe
+        must still be the thing that happens."""
+        self.stored(store, session_id="one", created_at=iso_days_ago(0))
+        store.record_session(
+            session_id="two",
+            transcript_path="/tmp/two.jsonl",
+            cwd="/repo",
+            git_branch="main",
+            verdict="unverified",
+        )
+
+        assert store.next_probe() is not None
+
     def test_a_row_invisible_for_another_reason_counts_as_caught_up(self, store: Store):
         """Options stored NULL: probes exist, so `never` would be the falser claim."""
         probe_id = self.stored(store, session_id="one", created_at=iso_days_ago(1))

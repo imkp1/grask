@@ -24,14 +24,14 @@ DEFAULT_TIMEOUT = 180
 # `--tools ""` rather than `--disallowed-tools <list>`: both refuse the same
 # calls, but a disallowed tool is a tool the model was still *told about*.
 # Measured on a trivial prompt, warm cache: 8,918 -> 5,585 input tokens and
-# $0.0048 -> $0.0031, reproduced across runs. Three calls per capture, so ~10k
+# $0.0048 -> $0.0031, reproduced across runs. Four calls per capture, so ~13k
 # tokens a session for definitions nothing was allowed to use.
 #
 # It buys tokens, not seconds. The first measurement appeared to show 0.6s off
 # the wall too; at n=3 the same two times turn up swapped between the arms, so
 # that was API variance (+/-700ms call to call) and not this flag. Capture's
-# ~30s is three sequential model calls on a ~15k-token dialogue, and no flag
-# here touches that.
+# ~45s is four sequential model calls, three of them on a ~15k-token dialogue,
+# and no flag here touches that.
 NO_TOOLS = ("--tools", "")
 
 # Each `-p` call is itself a session, and a persisted session is a transcript on
@@ -69,7 +69,28 @@ NO_SKILLS = ("--disable-slash-commands",)
 
 
 class LLMError(RuntimeError):
-    """The CLI failed, timed out, or returned something unparseable."""
+    """The CLI failed, timed out, or returned something unparseable.
+
+    Carries the spend behind the failure when the stage that raised it knows
+    one. A stage that gives up after three attempts was billed for all three,
+    and the exception is the only thing that leaves the stage — so a failure
+    that does not carry its cost is a failure that reads as free. `capture.py`
+    is where that lands, on a row for a session that produced nothing.
+
+    None means "not known", not "nothing", and the two are different: a CLI
+    that could not start spent nothing, while a stage nobody taught to report
+    spent something nobody counted.
+    """
+
+    def __init__(
+        self,
+        *args: object,
+        cost_usd: float | None = None,
+        duration_ms: int | None = None,
+    ) -> None:
+        super().__init__(*args)
+        self.cost_usd = cost_usd
+        self.duration_ms = duration_ms
 
 
 @dataclass

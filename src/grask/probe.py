@@ -400,25 +400,38 @@ def probe(
     spent = 0.0
     last: LLMError | None = None
 
-    for _ in range(attempts):
-        try:
-            completion = complete(prompt)
-        except LLMError as exc:
-            last = exc
-            prompt = base
-            continue
+    # The whole loop is wrapped, not just its exit: `parse_probe` can raise a
+    # plain `LLMError` (an unparseable response is not a `ProbeRejected`, which
+    # is a rule the model broke), and that escapes the retry below without
+    # passing the bottom of this function. Attaching the spend in one place is
+    # what stops the most ordinary stage 3 failure reporting as free.
+    try:
+        for _ in range(attempts):
+            try:
+                completion = complete(prompt)
+            except LLMError as exc:
+                last = exc
+                prompt = base
+                continue
 
-        spent += completion.cost_usd or 0.0
+            spent += completion.cost_usd or 0.0
 
-        try:
-            parsed = parse_probe(seed, completion)
-        except ProbeRejected as exc:
-            last = exc
-            prompt = base + CORRECTION.format(question=exc.question, reason=exc.reason)
-            continue
+            try:
+                parsed = parse_probe(seed, completion)
+            except ProbeRejected as exc:
+                last = exc
+                prompt = base + CORRECTION.format(question=exc.question, reason=exc.reason)
+                continue
 
-        # Every attempt was billed, so every attempt is in the number. A cost that
-        # counts only the winning call makes stage 3 look cheaper than it is.
-        return replace(parsed, cost_usd=spent)
+            # Every attempt was billed, so every attempt is in the number. A cost
+            # that counts only the winning call makes stage 3 look cheaper than
+            # it is.
+            return replace(parsed, cost_usd=spent)
+    except LLMError as exc:
+        exc.cost_usd = spent
+        raise
 
-    raise last if last else LLMError("probe exhausted its attempts without an error")
+    # Giving up does not refund the attempts either.
+    failed = last if last else LLMError("probe exhausted its attempts without an error")
+    failed.cost_usd = spent
+    raise failed

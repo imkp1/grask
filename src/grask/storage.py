@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
@@ -37,6 +38,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     topic           TEXT,
     cost_usd        REAL,
     duration_ms     INTEGER,
+    discarded_usd   REAL,
     triaged_at      TEXT NOT NULL
 );
 
@@ -94,7 +96,7 @@ CREATE TABLE IF NOT EXISTS answers (
 # Columns added to tables that had already shipped, per table. `_migrate` walks
 # this; `SCHEMA` above carries the same columns for databases created fresh.
 ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
-    "sessions": (("duration_ms", "INTEGER"),),
+    "sessions": (("duration_ms", "INTEGER"), ("discarded_usd", "REAL")),
     "seeds": (("duration_ms", "INTEGER"),),
     "probes": (
         ("options", "TEXT"),
@@ -110,24 +112,37 @@ ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
 # can fall out of sync with the clock.
 PROBE_TTL_DAYS = 7
 
-# The five ways `next_probe` can come back with nothing. See `empty_reason`.
-EmptyReason = Literal["over_cap", "capturing", "expired", "caught_up", "never"]
+# The six ways `next_probe` can come back with nothing. See `empty_reason`.
+EmptyReason = Literal[
+    "over_cap", "capturing", "unverified", "expired", "caught_up", "never"
+]
 
 # The verdict a session carries while its capture is still running. Not a
 # triage outcome — `capture_session` writes it before the first model call and
-# overwrites it with the real verdict at the end. It exists so the ~30s the
-# pipeline spends in three sequential model calls is a state the queue can
+# overwrites it with the real verdict at the end. It exists so the ~45s the
+# pipeline spends in four sequential model calls is a state the queue can
 # name, rather than a window in which a pending probe is indistinguishable from
 # no probe at all.
 CAPTURING = "capturing"
 
 # How long a `capturing` row is believed. The pipeline's worst case is triage
-# (180s) plus seed (180s) plus probe's three attempts (540s) = 15 minutes, so
-# anything older than this is a worker that died without writing its verdict —
-# a crash, a reboot, a `kill`. Past the window the row stops claiming a probe is
-# coming and stops blocking a re-capture of the same transcript, because a
-# marker with no way out is how a queue jams permanently.
-CAPTURE_STALE_MINUTES = 20
+# (180s) plus seed (180s) plus probe's three attempts (540s) plus verify's three
+# (540s) = 24 minutes, so anything older than this is a worker that died without
+# writing its verdict — a crash, a reboot, a `kill`. Past the window the row
+# stops claiming a probe is coming and stops blocking a re-capture of the same
+# transcript, because a marker with no way out is how a queue jams permanently.
+CAPTURE_STALE_MINUTES = 30
+
+# The verdict a session carries when stage 4 read the question grask wrote for
+# it and would not vouch for the answer key. A terminal verdict like `silent`
+# and `error`, and deliberately neither of them: the session was worth asking
+# about (triage said `ask`, and the seed is stored) and nothing malfunctioned.
+# It shares `PROBE_TTL_DAYS` rather than the capture window because it is not a
+# transient state — it is a fact about a session, and it stops being worth
+# mentioning at the same age as the probes it would have competed with. It also
+# stops being worth mentioning the moment a *later* session mints a probe: see
+# `empty_reason`, where the age limit alone was not enough.
+UNVERIFIED = "unverified"
 
 
 def _pending_from_row(row: sqlite3.Row) -> PendingProbe:
@@ -156,6 +171,29 @@ def _pending_from_row(row: sqlite3.Row) -> PendingProbe:
         rubric=Rubric(topic=row["topic"], hypothesis=row["hypothesis"]),
         created_at=row["created_at"],
     )
+
+
+def _json_list(raw: str | None) -> list[str]:
+    """A stored JSON array of strings, or nothing.
+
+    Same defensiveness as `_pending_from_row`: a seed whose quotes will not
+    parse is still a seed worth re-asking, and stage 3 tolerates an empty list
+    where it would not tolerate a crash on the way in.
+    """
+    try:
+        loaded = json.loads(raw or "")
+    except (TypeError, ValueError):
+        return []
+    return [item for item in loaded if isinstance(item, str)] if isinstance(loaded, list) else []
+
+
+@dataclass(frozen=True)
+class UnprobedSeed:
+    """A stored seed with no question written from it, and where to find its dialogue."""
+
+    seed_id: int
+    seed: Seed
+    transcript_path: Path
 
 
 def grask_home() -> Path:
@@ -261,8 +299,9 @@ class Store:
         Deliberately carries none of triage's fields: nothing is known yet, and
         a row that guessed would be a row `record_session` has to correct.
         `triaged_at` is the start time here and the finish time on the row that
-        replaces it — a marker nobody can read for more than 20 minutes does not
-        need two columns to say when it was written.
+        replaces it — a marker nobody can read for more than
+        `CAPTURE_STALE_MINUTES` does not need two columns to say when it was
+        written.
         """
         self.conn.execute(
             "INSERT INTO sessions"
@@ -291,6 +330,7 @@ class Store:
         topic: str | None = None,
         cost_usd: float | None = None,
         duration_ms: int | None = None,
+        discarded_usd: float | None = None,
     ) -> None:
         """Record one triaged session's outcome.
 
@@ -306,17 +346,30 @@ class Store:
 
         Both are None on the stage-0 path, which records a silent session
         without ever calling a model.
+
+        `discarded_usd` is the one spend with nowhere else to live: what stages
+        3 and 4 cost on a question stage 4 then threw away. There is no probes
+        row to carry it, so without a column it is not recorded at all.
+
+        Its own column rather than folded into `cost_usd`, for one reason:
+        `SUM(discarded_usd)` is what stage 4 has cost to produce nothing, and
+        that is the number that decides whether the stage is kept, tuned, or
+        reverted. Merged, it is unrecoverable — separating it back out would
+        mean subtracting a per-session triage cost that no longer exists
+        anywhere. It is a column because one specific question needs it exact,
+        not because the two numbers are conceptually different kinds of money.
         """
         self.conn.execute(
             "INSERT INTO sessions"
             " (session_id, transcript_path, cwd, git_branch, verdict, signal, topic,"
-            "  cost_usd, duration_ms, triaged_at)"
+            "  cost_usd, duration_ms, discarded_usd, triaged_at)"
             " VALUES (:id, :path, :cwd, :branch, :verdict, :signal, :topic,"
-            "         :cost, :duration, :now)"
+            "         :cost, :duration, :discarded, :now)"
             " ON CONFLICT(session_id) DO UPDATE SET"
             "  transcript_path = :path, cwd = :cwd, git_branch = :branch,"
             "  verdict = :verdict, signal = :signal, topic = :topic,"
-            "  cost_usd = :cost, duration_ms = :duration, triaged_at = :now"
+            "  cost_usd = :cost, duration_ms = :duration,"
+            "  discarded_usd = :discarded, triaged_at = :now"
             " WHERE sessions.verdict = :capturing",
             {
                 "id": session_id,
@@ -328,6 +381,7 @@ class Store:
                 "topic": topic,
                 "cost": cost_usd,
                 "duration": duration_ms,
+                "discarded": discarded_usd,
                 "capturing": CAPTURING,
                 "now": _now(),
             },
@@ -397,7 +451,7 @@ class Store:
         """Why `next_probe` came back empty, for callers that must explain it.
 
         Only meaningful once `next_probe` has returned None — this does not
-        re-check that, it just accounts for the five ways a queue can look empty:
+        re-check that, it just accounts for the six ways a queue can look empty:
 
         - `over_cap`: servable rows exist but carry more options than
           `max_options`. First in precedence because it is the only reason with
@@ -408,6 +462,18 @@ class Store:
           only other reason that is temporary: the queue is not empty so much as
           not yet full, and every other note here would tell the developer to go
           end another session — the one action that does not help.
+        - `unverified`: a session produced a question, stage 4 discarded it, and
+          nothing has minted a probe since. Third for the same reason
+          `capturing` is second — it is a queue that is empty for a reason
+          particular to this session, and every note below it would tell the
+          developer to go end another session, which here is in fact the right
+          advice but only once they know the last one is not still coming.
+
+          "Nothing since" is load-bearing, not belt-and-braces. Age alone left
+          one discard outranking `caught_up` for the whole seven days: a
+          developer who then earned a probe and answered it was still told the
+          queue was empty because a question had been thrown away — about a
+          session that was no longer the last one, every day for a week.
         - `expired`: probes were raised and went unasked past `PROBE_TTL_DAYS`.
         - `caught_up`: probes exist and none is still waiting.
         - `never`: no probe has ever been written.
@@ -427,11 +493,16 @@ class Store:
             "     AND json_array_length(p.options) > :cap) AS over_cap,"
             "  (SELECT COUNT(*) FROM sessions WHERE verdict = :capturing"
             "     AND triaged_at >= :stale) AS capturing,"
+            "  (SELECT COUNT(*) FROM sessions WHERE verdict = :unverified"
+            "     AND triaged_at >= :cutoff"
+            "     AND triaged_at >="
+            "       (SELECT COALESCE(MAX(created_at), '') FROM probes)) AS unverified,"
             f"  (SELECT COUNT(*) {unasked} AND p.created_at < :cutoff) AS expired",
             {
                 "cutoff": cutoff,
                 "cap": max_options,
                 "capturing": CAPTURING,
+                "unverified": UNVERIFIED,
                 "stale": self._capture_cutoff(),
             },
         ).fetchone()
@@ -440,6 +511,8 @@ class Store:
             return "over_cap"
         if row["capturing"]:
             return "capturing"
+        if row["unverified"]:
+            return "unverified"
         if row["expired"]:
             return "expired"
         return "caught_up" if row["total"] else "never"
@@ -498,6 +571,55 @@ class Store:
                 )
 
         return ask_id
+
+    def unprobed_seeds(self, *, within_days: int = PROBE_TTL_DAYS) -> list[UnprobedSeed]:
+        """Seeds that never got a question, newest first.
+
+        Two paths leave one behind: stage 4 discarding what stage 3 wrote, and
+        stage 2 succeeding into a stage 3 that gave up. Both keep the seed on
+        purpose — the moment was real and the hypothesis is as good as it would
+        have been had the rest worked — but until `reprobe` nothing could pick
+        one back up, which made "the seed is still stored" a claim with no
+        redemption behind it.
+
+        Bounded by `within_days` because stage 3 needs the dialogue, not just
+        the seed: re-asking a seed whose probe would be born expired spends a
+        model call on a question `next_probe` will never serve.
+
+        `transcript_path` comes back unchecked. Transcripts rotate, and whether
+        this one still exists is a filesystem question the caller has to ask at
+        the moment it reads the file anyway.
+        """
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=within_days)).isoformat()
+        rows = self.conn.execute(
+            "SELECT s.id, s.session_id, s.turn, s.signal, s.topic, s.quotes, s.refs,"
+            "  s.decision, s.hypothesis, s.cost_usd, s.duration_ms, ss.transcript_path"
+            " FROM seeds s"
+            " JOIN sessions ss ON ss.session_id = s.session_id"
+            " LEFT JOIN probes p ON p.seed_id = s.id"
+            " WHERE p.id IS NULL AND s.created_at >= :cutoff"
+            " ORDER BY s.created_at DESC, s.id DESC",
+            {"cutoff": cutoff},
+        ).fetchall()
+        return [
+            UnprobedSeed(
+                seed_id=row["id"],
+                transcript_path=Path(row["transcript_path"]),
+                seed=Seed(
+                    session_id=row["session_id"],
+                    turn=row["turn"],
+                    signal=row["signal"],
+                    topic=row["topic"],
+                    quotes=tuple(_json_list(row["quotes"])),
+                    refs=tuple(_json_list(row["refs"])),
+                    decision=row["decision"],
+                    hypothesis=row["hypothesis"],
+                    cost_usd=row["cost_usd"],
+                    duration_ms=row["duration_ms"],
+                ),
+            )
+            for row in rows
+        ]
 
     def add_probe(self, seed_id: int, probe: Probe) -> int:
         """Store the question, its shuffled options, and the answer key.

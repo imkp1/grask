@@ -57,12 +57,16 @@ resolved `"$GRASK" …` if you had to fall back.
    If `pending` is null, the queue is empty: relay the `note` field from that
    same JSON and stop. Do not shorten it to "nothing pending" and do not
    generalise across the `reason` codes — `note` already says *why* it is empty,
-   and the five reasons (`never`, `caught_up`, `capturing`, `expired`,
-   `over_cap`) mean different things. `over_cap` especially: those probes are
-   still waiting, they just do not fit this UI, so the note sends the developer
-   to the terminal. `capturing` is the other one worth getting right: a session
-   just ended and its question is still being written, so the queue is not empty
-   but early — relay the note and do not suggest ending another session.
+   and the six reasons (`never`, `caught_up`, `capturing`, `unverified`,
+   `expired`, `over_cap`) mean different things. `over_cap` especially: those
+   probes are still waiting, they just do not fit this UI, so the note sends the
+   developer to the terminal. `capturing` is the other one worth getting right: a
+   session just ended and its question is still being written, so the queue is
+   not empty but early — relay the note and do not suggest ending another
+   session. `unverified` is the opposite case and must not be softened into
+   "caught up": grask wrote a question, could not confirm its answer key, and
+   threw it away rather than grade the developer against a key that might be
+   wrong.
    If `grask` cannot be found or run either way, grask is not installed here —
    say so and stop rather than hunting for a checkout to `cd` into.
 

@@ -60,7 +60,12 @@ TERMINAL_EMPTY_NOTES = {
     "caught_up": f"{NOTHING_PENDING} you're caught up — more after your next session.",
     "capturing": (
         "a session just ended and its question is still being written — "
-        "about thirty seconds. try again shortly."
+        "about forty-five seconds. try again shortly."
+    ),
+    "unverified": (
+        f"{NOTHING_PENDING} the last question grask wrote did not survive its "
+        "own check — it could not confirm the answer key, and threw the question "
+        "away rather than grade you against it."
     ),
     "expired": (
         f"{NOTHING_PENDING} what was queued went unasked for over "
@@ -121,7 +126,7 @@ MORE_LATER = "More arrive after your next session ends."
 # One note per `Store.empty_reason`. An empty queue is the first thing a new
 # install shows and the most common thing a caught-up one shows, so each state
 # says which it is — "nothing pending" alone reads like a failure, and a single
-# shared line would misdescribe four of these five.
+# shared line would misdescribe five of these six.
 EMPTY_QUEUE_NOTES = {
     "never": (
         "Nothing is queued. grask writes probes from a session's transcript "
@@ -131,9 +136,16 @@ EMPTY_QUEUE_NOTES = {
     "caught_up": f"You are caught up: every probe grask raised is answered. {MORE_LATER}",
     "capturing": (
         "A session ended in the last few minutes and grask is still writing its "
-        "question — the pipeline is three model calls and takes about thirty "
+        "question — the pipeline is four model calls and takes about forty-five "
         "seconds. Nothing is wrong and nothing is lost; the probe will be here "
         "shortly. Do not end another session to hurry it along."
+    ),
+    "unverified": (
+        "Nothing is queued. The last question grask wrote was discarded before "
+        "it reached you: a second pass reads the options without knowing which is "
+        "the key, and it could not confirm that exactly one of them was true. A "
+        "question graded against an answer key that might be wrong is worse than "
+        f"no question. Nothing is broken and nothing needs doing. {MORE_LATER}"
     ),
     "expired": (
         f"Nothing is queued. The probes grask had raised went unasked for more "

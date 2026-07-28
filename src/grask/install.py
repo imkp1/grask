@@ -260,6 +260,36 @@ def _python_check() -> tuple[bool, str]:
     return True, f"{python3} (Python {got})"
 
 
+def _skill_freshness(skill_file: Path) -> tuple[bool, str]:
+    """Whether the installed skill is still the one this version ships.
+
+    Existing is not the same as current. `grask install` copies `SKILL.md` into
+    `~/.claude/skills/`, and upgrading the package does not re-copy it — so a
+    user can run a new grask against a skill written for an older one and have
+    `doctor` call it healthy. It bit for the first time when stage 4 added a
+    sixth `empty_reason`: the note text itself comes from the installed code and
+    stays correct, but a skill that lists five reason codes is a skill inviting
+    the model to flatten the sixth into one it recognises.
+
+    A drift is reported as a failure rather than a note because `doctor`'s
+    contract is a single exit code, and there is no severity between them. It
+    also reads correctly for a hand-edited skill: those edits are not being
+    tested, and the next `grask install` overwrites them silently.
+
+    Unreadable either side is *not* drift. "Cannot check" and "is wrong" are
+    different answers, and only one of them should stop a developer.
+    """
+    try:
+        installed = skill_file.read_text(encoding="utf-8")
+        shipped = packaged_skill_text()
+    except (OSError, ModuleNotFoundError, FileNotFoundError):  # pragma: no cover
+        return True, f"{skill_file} (could not compare with the packaged copy)"
+
+    if installed == shipped:
+        return True, str(skill_file)
+    return False, f"{skill_file} is stale — re-run `grask install`"
+
+
 def _checks(skills: Path, settings: Path) -> list[tuple[str, bool, str]]:
     """The diagnostics, as (label, ok, detail) triples. Kept as data rather than
     prose so a future `grask doctor --json` is a rendering change, not a rewrite.
@@ -280,11 +310,11 @@ def _checks(skills: Path, settings: Path) -> list[tuple[str, bool, str]]:
     via_plugin = shim.is_file()
 
     if skill_file.is_file():
-        skill_ok, skill_detail = True, str(skill_file)
+        skill_ok, skill_detail = _skill_freshness(skill_file)
     elif via_plugin:
         skill_ok, skill_detail = True, f"provided by the plugin ({shim})"
     else:
-        skill_ok, skill_detail = False, str(skill_file)
+        skill_ok, skill_detail = False, f"{skill_file} is missing — run `grask install`"
 
     if wired:
         hook_ok, hook_detail = True, f"SessionEnd `{HOOK_COMMAND}` in {settings}"
@@ -300,7 +330,7 @@ def _checks(skills: Path, settings: Path) -> list[tuple[str, bool, str]]:
     return [
         ("claude on PATH", claude is not None, claude or no_claude),
         (f"python3 ≥ {need}", py_ok, py_detail),
-        ("delivery skill present", skill_ok, skill_detail),
+        ("delivery skill current", skill_ok, skill_detail),
         ("capture hook wired", hook_ok, hook_detail),
     ]
 

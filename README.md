@@ -190,7 +190,7 @@ defence. This project has made that mistake once already.
 
 ## How it works
 
-Four stages, cheapest first. Each one filters, so only what survives pays for the next.
+Five stages, cheapest first. Each one filters, so only what survives pays for the next.
 
 | Stage | Module | Cost | Job |
 |---|---|---|---|
@@ -199,6 +199,7 @@ Four stages, cheapest first. Each one filters, so only what survives pays for th
 | — select | `select.py` | free | Rank the moments and pick one. Deliberately code, not prompt: a model asked to both find and choose picks arbitrarily, and the topic changed run to run on an unchanged session. |
 | 2 — seed | `seed.py` | one call | State, as a falsifiable claim, what the developer may have accepted without understanding. Stored, so a better stage-3 prompt can re-ask the whole corpus later. |
 | 3 — probe | `probe.py` | one call, up to 3 | Write one multiple-choice question about the mechanism, with the answer key and an explanation. A structurally unusable question is regenerated. |
+| 4 — verify | `verify.py` | one call | Read the options *without* the key, the explanation, or the transcript, and judge each one true or false on its own. The probe is kept only if exactly one is true and it is the key; otherwise it is discarded. |
 
 Several rules are enforced in code rather than prompted for, because instruction is not a
 control. Two matter most:
@@ -211,6 +212,11 @@ control. Two matter most:
 The question must also teach something portable. A question whose answer is "because this
 file says so" is answerable only by whoever sat through the session and is worth nothing
 once they close the file.
+
+- **The one-key rule.** Stage 3 writes the question, every option, the key, and the
+  explanation in one pass and never re-reads an early option against a later one, so stage 4
+  reads them back cold. Measured over 47 stored probes it discards 6% — including one whose
+  key described a name collision that does not happen.
 
 grask names no model: it calls `claude -p` with no `--model` flag, so every stage runs on
 whatever you have selected and there is no second credential to manage. Its own prompts are
