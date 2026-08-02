@@ -34,7 +34,7 @@ def session(*texts: str, files: set[str] | None = None) -> Session:
         session_id="0198e4f1",
         path=Path("/tmp/0198e4f1.jsonl"),
         git_branch="main",
-        turns=[Turn(text=t, timestamp=None, index=i) for i, t in enumerate(texts)],
+        turns=[Turn(text=t, index=i) for i, t in enumerate(texts)],
         files_touched=files or set(),
     )
 

@@ -24,7 +24,6 @@ from typing import Any
 from grask.transcript import (
     EDIT_TOOLS,
     Turn,
-    _parse_timestamp,
     human_turn_text,
     iter_records,
     message_content,
@@ -36,9 +35,16 @@ from grask.transcript import (
 # costs its own slot and not its neighbours'.
 MAX_EDIT_CHARS = 2000
 
-# Assistant explanations are the thing the developer may have accepted on faith,
-# so this is generous — but a single reply can contain a whole design document.
-MAX_REPLY_CHARS = 4000
+# Replies are not capped here. They used to be, at 4000 — and never once took
+# effect, because the only thing that reads a Reply is `seed.render_dialogue`,
+# which clips every event to `MAX_EVENT_CHARS` (2000) on the way into the
+# prompt. A tighter cap downstream makes the looser one upstream unreachable:
+# `_clip(x, 4000)[:2000] == x[:2000]` for every string. Two numbers, one of
+# which could never be the answer.
+#
+# Edits still are capped here, and that is not the same situation: an edit is
+# rendered from `before`/`after`, which `render_dialogue` does not clip, so this
+# is the only place a vendored blob gets stopped.
 
 TRUNCATED = "\n… [truncated]"
 
@@ -92,10 +98,6 @@ class Dialogue:
     def edits(self) -> list[Edit]:
         return [e for e in self.events if isinstance(e, Edit)]
 
-    @property
-    def rendered_bytes(self) -> int:
-        return sum(len(getattr(e, "text", "") or getattr(e, "after", "")) for e in self.events)
-
 
 def _edit_from_tool_use(block: dict[str, Any], index: int) -> Edit | None:
     if block.get("type") != "tool_use" or block.get("name") not in EDIT_TOOLS:
@@ -138,13 +140,7 @@ def extract_dialogue(path: Path) -> Dialogue:
         dialogue.git_branch = dialogue.git_branch or record.get("gitBranch")
 
         if (text := human_turn_text(record)) is not None:
-            dialogue.events.append(
-                Turn(
-                    text=text,
-                    timestamp=_parse_timestamp(record.get("timestamp")),
-                    index=len(dialogue.events),
-                )
-            )
+            dialogue.events.append(Turn(text=text, index=len(dialogue.events)))
             continue
 
         content = message_content(record)
@@ -158,8 +154,6 @@ def extract_dialogue(path: Path) -> Dialogue:
                 elif block.get("type") == "text":
                     reply = block.get("text")
                     if isinstance(reply, str) and reply.strip():
-                        dialogue.events.append(
-                            Reply(text=_clip(reply.strip(), MAX_REPLY_CHARS), index=index)
-                        )
+                        dialogue.events.append(Reply(text=reply.strip(), index=index))
 
     return dialogue

@@ -40,7 +40,6 @@ def an_interrogation(*, probe_id: int, turn_count: int = 1) -> Interrogation:
     return Interrogation(
         probe_id=probe_id,
         outcome="passed",
-        confidence=95,
         objection=None,
         turns=turns,
         cost_usd=0.0,
@@ -573,6 +572,53 @@ class TestCapturingMarker:
 
         assert store.has_session("live") is True
 
+
+class TestBeginSessionIsTheClaim:
+    """`begin_session` returns whether the caller owns the session.
+
+    It is the whole of the concurrency control. `has_session` is a separate
+    statement, so two workers can both pass it; this INSERT is the only step
+    sqlite makes atomic, and the return value is how the loser finds out.
+    """
+
+    def _age(self, store: Store, session_id: str, minutes: int) -> None:
+        when = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+        store.conn.execute(
+            "UPDATE sessions SET triaged_at = ? WHERE session_id = ?",
+            (when.isoformat(), session_id),
+        )
+        store.conn.commit()
+
+    def test_the_first_caller_wins(self, store: Store):
+        assert store.begin_session(session_id="a", transcript_path="/t/a.jsonl") is True
+
+    def test_a_second_caller_against_a_live_marker_loses(self, store: Store):
+        store.begin_session(session_id="a", transcript_path="/t/a.jsonl")
+
+        assert store.begin_session(session_id="a", transcript_path="/t/a.jsonl") is False
+
+    def test_a_stale_marker_is_taken_over_rather_than_refused(self, store: Store):
+        """The recovery path. A marker with no way out jams the session
+        permanently, which is worse than the double-capture this guards."""
+        store.begin_session(session_id="a", transcript_path="/t/a.jsonl")
+        self._age(store, "a", CAPTURE_STALE_MINUTES + 1)
+
+        assert store.begin_session(session_id="a", transcript_path="/t/a.jsonl") is True
+
+    def test_a_finished_session_is_never_reclaimed(self, store: Store):
+        """A terminal verdict is immutable, and this is the read side of that:
+        no staleness makes a session worth paying for twice."""
+        store.record_session(
+            session_id="a",
+            transcript_path="/t/a.jsonl",
+            cwd="/repo",
+            git_branch="main",
+            verdict="ask",
+        )
+        self._age(store, "a", CAPTURE_STALE_MINUTES * 100)
+
+        assert store.begin_session(session_id="a", transcript_path="/t/a.jsonl") is False
+
     def test_a_stale_marker_stops_claiming_anything(self, store: Store):
         """A worker killed mid-flight must not jam its session forever, nor keep
         promising a probe that is never coming."""
@@ -792,7 +838,6 @@ class TestRecordAsk:
 
         row = store.conn.execute("SELECT * FROM asks WHERE id = ?", (ask_id,)).fetchone()
         assert row["outcome"] == "passed"
-        assert row["confidence"] == 95
         assert row["turns"] == 1
         assert row["cost_usd"] == 0.0
         assert row["completed_at"] is not None
@@ -816,14 +861,13 @@ class TestRecordAsk:
         with pytest.raises(sqlite3.IntegrityError):
             store.record_ask(an_interrogation(probe_id=probe_id))
 
-    def test_a_skip_records_no_answers_and_a_null_confidence(self, store: Store):
+    def test_a_skip_records_no_answers(self, store: Store):
         probe_id = self.a_probe_id(store)
 
         ask_id = store.record_ask(
             Interrogation(
                 probe_id=probe_id,
                 outcome="skipped",
-                confidence=None,
                 objection=None,
                 turns=(),
                 cost_usd=0.0,
@@ -831,6 +875,8 @@ class TestRecordAsk:
         )
 
         row = store.conn.execute("SELECT * FROM asks WHERE id = ?", (ask_id,)).fetchone()
+        # The column survives for rows written before the confidence round was
+        # cut; nothing populates it now, so a fresh row leaves it NULL.
         assert row["confidence"] is None
         assert row["turns"] == 0
         assert store.conn.execute(
@@ -844,7 +890,6 @@ class TestRecordAsk:
             Interrogation(
                 probe_id=probe_id,
                 outcome="premise_rejected",
-                confidence=None,
                 objection="the question misreads the diff",
                 turns=(),
                 cost_usd=0.0,
@@ -878,3 +923,86 @@ class TestProbeById:
 
     def test_an_unknown_id_is_none(self, store: Store):
         assert store.probe_by_id(999) is None
+
+
+class TestStats:
+    """The developer's own record.
+
+    Everything grask measured, it measured for whoever is tuning the pipeline.
+    The person the questions are *for* had no way to see the ones they had
+    answered, which made the one durable artifact of using grask the one thing
+    it would not show them.
+    """
+
+    def _answered(self, store: Store, outcome: str) -> None:
+        store.record_session(
+            session_id=f"s-{outcome}",
+            transcript_path="/t/a.jsonl",
+            cwd="/repo",
+            git_branch="main",
+            verdict="ask",
+        )
+        seed_id = store.add_seed(a_seed(session_id=f"s-{outcome}"))
+        probe_id = store.add_probe(seed_id, a_probe())
+        store.record_ask(
+            Interrogation(
+                probe_id=probe_id,
+                outcome=outcome,
+                objection=None,
+                turns=(),
+                cost_usd=0.0,
+            )
+        )
+
+    def test_an_untouched_install_counts_zero_rather_than_failing(self, store: Store):
+        stats = store.stats()
+
+        assert (stats.sessions, stats.raised, stats.answered) == (0, 0, 0)
+        assert stats.recent == ()
+
+    def test_outcomes_are_counted_separately(self, store: Store):
+        for outcome in ("passed", "passed", "failed", "skipped"):
+            self._answered(store, outcome)
+
+        stats = store.stats()
+
+        assert (stats.passed, stats.failed, stats.skipped) == (2, 1, 1)
+        assert stats.answered == 4
+
+    def test_pending_matches_what_next_probe_would_serve(self, store: Store):
+        """Two views of the queue that disagree are worse than one. An expired
+        row is invisible to `next_probe`, so it must not be counted as waiting."""
+        store.record_session(
+            session_id=a_seed().session_id,
+            transcript_path="/t/a.jsonl",
+            cwd="/repo",
+            git_branch="main",
+            verdict="ask",
+        )
+        seed_id = store.add_seed(a_seed())
+        store.add_probe(seed_id, a_probe())
+        store.conn.execute(
+            "UPDATE probes SET created_at = ?", (iso_days_ago(PROBE_TTL_DAYS + 1),)
+        )
+        store.conn.commit()
+
+        assert store.next_probe() is None
+        assert store.stats().pending == 0
+        # The probe still exists; it is only no longer servable.
+        assert store.stats().raised == 1
+
+    def test_a_capturing_session_is_not_counted_as_seen(self, store: Store):
+        """It has not been triaged yet — it is a marker, not a result."""
+        store.begin_session(session_id="live", transcript_path="/t/live.jsonl")
+
+        assert store.stats().sessions == 0
+
+    def test_recent_carries_the_topic_and_question_newest_first(self, store: Store):
+        self._answered(store, "passed")
+        self._answered(store, "failed")
+
+        recent = store.stats(recent=1).recent
+
+        assert len(recent) == 1
+        assert recent[0].topic == a_seed().topic
+        assert recent[0].question == a_probe().question

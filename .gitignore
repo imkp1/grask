@@ -35,3 +35,9 @@ corpus-run*.txt
 
 # demo recording scratch
 docs/demo/.demo-home/
+
+# Coverage is measured in CI against a floor; the local artifacts are not
+# results worth keeping.
+.coverage
+.coverage.*
+htmlcov/

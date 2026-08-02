@@ -6,6 +6,72 @@ SQLite schema under `GRASK_HOME` carries no migration guarantee yet.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/) once there is a 1.0 to be compatible with.
 
+## Unreleased
+
+- **One worker per session, enforced where it can be.** `has_session` and `begin_session` are two
+  statements, so two capture workers could both pass the first — which SessionEnd firing twice, or
+  a corpus run overlapping the live hook, is enough to cause. Both then ran the whole four-call
+  pipeline and both wrote: `record_session` no-ops for the loser, but `add_seed` and `add_probe`
+  had no such guard, so one session produced two seeds and two probes and the developer was asked
+  the same question twice, having paid for it twice. `begin_session` now returns whether the
+  caller owns the session, decided by the INSERT itself because that is the only step sqlite makes
+  atomic, and the loser returns before the first model call. Taking over a marker left by a worker
+  that died is unchanged — a claim with no way out jams the session forever, which is worse than
+  the double capture it would prevent.
+- **The topic is no longer served before the pick.** It states *why* a probe was raised, which is
+  the bridge to its answer. The skill was told to keep it out of the picker and `serve` sent it
+  anyway; the field is now simply absent, the same way the transcript is absent from `verify`'s
+  signature rather than from its prompt. It still reaches the developer in `record`'s `display`,
+  after the answer is settled.
+- **`grask stats`.** Every number grask kept, it kept for whoever is tuning the pipeline. The
+  person the questions are *for* had no way to see the ones they had answered without opening
+  SQLite. Read-only, free, and no percentage: one probe cannot identify understanding.
+- **`settings.json` is edited safely.** It is written atomically — temp file, then rename — so a
+  crash or a full disk mid-write can no longer cost the developer every hook and preference in a
+  file grask edits to add one line. And `install`/`uninstall` now refuse a settings file they
+  cannot parse, with a message, instead of raising a JSONDecodeError as an unhandled traceback on
+  the first command a new user runs. `install` reads it before writing the skill, so a refusal
+  leaves nothing half-configured.
+- **The database and the log stop being unbounded.** SQLite opens in WAL with a 30-second busy
+  timeout, so a `serve` no longer queues behind a detached worker's commit and time out as an
+  uncaught `OperationalError` in front of the developer. `grask.log` rotates at 1 MB, keeping one
+  generation.
+- Stage 4's duration reaches the probe row on the path where its call failed, matching the cost
+  that already did. Two columns on one row covering different sets of stages are two numbers
+  nobody can put beside each other, which is the thing `verify` folds them together to avoid.
+- CI measures coverage against a floor of 84%, with nothing excluded to flatter the number.
+
+### Removed
+
+Nothing here changes what grask does. Each was verified unreachable or redundant before it
+went, and the suite is the check that it stays that way.
+
+- **`Turn.timestamp` and the parser behind it.** Written on every turn of every session by
+  both read paths, and read by nothing: a moment is identified by its turn index, and every
+  ordering in the pipeline is by position in the file. A parse nothing depends on cannot be
+  wrong, which is the same as saying it was never right.
+- **The reply length cap.** Replies were clipped at 4000 characters on the way out of a
+  transcript and again at 2000 on the way into a prompt, and only the second could ever
+  bind — `clip(x, 4000)[:2000]` is `x[:2000]` for every string. The tighter cap is now the
+  only one. Edits keep theirs: nothing downstream clips those.
+- **`Interrogation.confidence`.** The confidence round was cut; the field could only ever be
+  None, threaded from a dataclass through a bind parameter to write a NULL the column
+  already defaults to. The column stays — rows from before the cut hold real numbers.
+- **`Dialogue.rendered_bytes`** and **`unprobed_seeds(within_days=…)`** — one never called,
+  one never given anything but its default.
+
+### Unified
+
+- **One option alphabet.** `ask` had five letters and `verify` had eight, for the same job on
+  the same object. `probe.LETTERS` owns it and all three surfaces read it.
+- **One option cap.** `probe.MAX_OPTIONS` and `cli.MAX_UI_OPTIONS` were the same 4 justified
+  by the same sentence, in two modules with no way to notice the day they stopped agreeing.
+- **One probe-expiry cutoff.** The TTL expression was spelled out in four queries; a probe
+  the queue serves but the count calls expired is two answers to one question.
+- **One "is the hook wired" check.** `_checks` open-coded what `hook_configured` already did,
+  and had drifted: it did not treat an unreadable settings file as unwired for the same set
+  of exceptions.
+
 ## 0.1.0-rc6
 
 - **A probe's answer key is checked before the probe reaches you.** Stage 3 writes the question,

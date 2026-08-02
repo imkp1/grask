@@ -76,6 +76,10 @@ disallow_incomplete_defs = false
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+    # Coverage is measured in CI against a floor, not reported for reading. It
+    # is a dev-group dependency only — the 3.8 `floor` job runs `--no-project
+    # --with pytest`, so it never sees this and does not need to.
+    "pytest-cov>=5.0",
     "ruff>=0.14",
     "mypy>=1.14",
 ]

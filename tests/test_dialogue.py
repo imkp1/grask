@@ -15,7 +15,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from grask.dialogue import Edit, Reply, extract_dialogue
+from grask.dialogue import (
+    MAX_EDIT_CHARS,
+    TRUNCATED,
+    Edit,
+    Reply,
+    extract_dialogue,
+)
+from grask.seed import MAX_EVENT_CHARS, render_dialogue
 from grask.transcript import Turn
 
 
@@ -183,3 +190,44 @@ class TestSize:
         assert len(edit.after) < 20_000
         # The turn after the runaway edit is still there.
         assert dialogue.events[-1].text == "why is it sync?"
+
+
+class TestOneCapPerEvent:
+    """Each event kind is clipped in exactly one place.
+
+    Replies used to be clipped twice — 4000 here, then 2000 again in
+    `seed.render_dialogue`, which is the only thing that ever reads one. The
+    looser number could not take effect at any input length, so it was a limit
+    that read like a decision and was not one. Edits are clipped here and only
+    here, because `render_dialogue` renders them from `before`/`after`, which it
+    does not touch.
+    """
+
+    def test_a_long_reply_is_carried_whole_and_clipped_at_render(self, tmp_path):
+        long_reply = "z" * 9000
+        path = write_transcript(tmp_path, [assistant_text(long_reply)])
+
+        replies = [e for e in extract_dialogue(path).events if isinstance(e, Reply)]
+
+        assert len(replies[0].text) == 9000, "the read does not cap a reply"
+        assert len(render_dialogue(extract_dialogue(path))) < 9000
+
+    def test_the_rendered_reply_is_what_the_two_caps_used_to_produce(self, tmp_path):
+        """The removal changed nothing that reaches a prompt: for every string,
+        clipping at 4000 and then at 2000 is clipping at 2000."""
+        long_reply = "z" * 9000
+        path = write_transcript(tmp_path, [assistant_text(long_reply)])
+
+        rendered = render_dialogue(extract_dialogue(path))
+
+        assert rendered.endswith("z" * 100)
+        assert rendered.count("z") == MAX_EVENT_CHARS
+
+    def test_an_edit_is_still_capped_by_the_read(self, tmp_path):
+        """The other direction: nothing downstream clips an edit, so dropping
+        this cap too would put a vendored blob straight into the prompt."""
+        path = write_transcript(tmp_path, [assistant_edit("src/a.py", "old", "b" * 9000)])
+
+        edits = extract_dialogue(path).edits
+
+        assert len(edits[0].after) == MAX_EDIT_CHARS + len(TRUNCATED)

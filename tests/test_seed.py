@@ -28,7 +28,7 @@ from grask.triage import Moment
 def dialogue(*texts: str) -> Dialogue:
     events: list = []
     for i, text in enumerate(texts):
-        kind = Turn(text=text, timestamp=None, index=i) if i % 2 == 0 else Reply(text=text, index=i)
+        kind = Turn(text=text, index=i) if i % 2 == 0 else Reply(text=text, index=i)
         events.append(kind)
     return Dialogue(
         session_id="0198e4f1",

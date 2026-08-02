@@ -95,12 +95,36 @@ class TestServe:
         assert "correct" not in out
         assert a_probe().explanation not in out
         assert json.loads(out) == {
+            "pending": True,
             "probe_id": probe_id,
             "question": a_probe().question,
             "options": list(a_probe().options),
-            "topic": RUBRIC.topic,
             "created_at": json.loads(out)["created_at"],
         }
+
+    def test_the_topic_is_never_served_before_the_pick(self, db: Path, capsys):
+        """The topic states *why* the probe was raised, which is the bridge to
+        its answer. The skill is told to keep it out of the picker; this is what
+        makes that true rather than instructed, and it is the same reasoning
+        that keeps the transcript out of `verify`'s signature."""
+        stored_probe(db)
+
+        run(db, ["serve", "--json"])
+        out = capsys.readouterr().out
+
+        assert "topic" not in json.loads(out)
+        assert RUBRIC.topic not in out
+
+    def test_a_waiting_probe_says_pending_rather_than_omitting_it(
+        self, db: Path, capsys
+    ):
+        """Both arms carry the key. A reader that has to infer "yes" from a
+        missing field is a reader one refactor away from inferring it wrong."""
+        stored_probe(db)
+
+        run(db, ["serve", "--json"])
+
+        assert json.loads(capsys.readouterr().out)["pending"] is True
 
     def test_consumes_nothing(self, db: Path, capsys):
         probe_id = stored_probe(db)
@@ -248,13 +272,14 @@ class TestRecord:
         out = capsys.readouterr().out
         upcoming = json.loads(out)["next"]
         assert set(upcoming) == {
+            "pending",
             "probe_id",
             "question",
             "options",
-            "topic",
             "created_at",
         }
         assert a_probe().explanation not in json.dumps(upcoming)
+        assert RUBRIC.topic not in json.dumps(upcoming)
 
     def test_next_explains_an_empty_queue_the_same_way_serve_does(
         self, db: Path, capsys
