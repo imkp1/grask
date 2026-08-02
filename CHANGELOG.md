@@ -6,7 +6,7 @@ SQLite schema under `GRASK_HOME` carries no migration guarantee yet.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/) once there is a 1.0 to be compatible with.
 
-## Unreleased
+## 0.1.0-rc7
 
 - **One worker per session, enforced where it can be.** `has_session` and `begin_session` are two
   statements, so two capture workers could both pass the first — which SessionEnd firing twice, or
