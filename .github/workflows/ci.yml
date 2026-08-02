@@ -97,7 +97,7 @@ jobs:
         run: |
           grask --help
           # A GRASK_HOME this run just created has never captured anything, and
-          # an empty queue has to say which of the four kinds of empty it is.
+          # an empty queue has to say which of the six kinds of empty it is.
           grask serve --json | grep -q '"pending": null'
           grask serve --json | grep -q '"reason": "never"'
           # `stats` is the one command a developer runs against a database that

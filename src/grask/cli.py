@@ -484,7 +484,7 @@ def main(
         if pending is None:
             # A command you typed that prints nothing looks broken. Silence is
             # for the tools that push; this one was asked for — and one line for
-            # four different states would misdescribe three of them.
+            # six different states would misdescribe five of them.
             print(TERMINAL_EMPTY_NOTES[store.empty_reason()])
             return 0
 
