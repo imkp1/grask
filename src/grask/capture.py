@@ -29,12 +29,34 @@ from grask.triage import triage as _triage
 from grask.verify import ProbeUnverified
 from grask.verify import verify as _verify
 
+# When grask.log is rotated to grask.log.1, discarding whatever was in .1
+# already. One generation, because the log is a debugging aid for the capture
+# that just failed and not an audit trail — a second generation would double the
+# ceiling to hold traffic nobody reads.
+#
+# A megabyte is a few thousand capture lines, which on the observed rate (a
+# handful per session) is months. The point is not to save disk; it is that a
+# file appended to by a detached worker on every session end, forever, with
+# nothing that ever truncates it, is unbounded by construction — and the tracebacks
+# it holds are the biggest lines it writes.
+MAX_LOG_BYTES = 1_048_576
+
+
+def _rotate(path: Path) -> None:
+    """Move an oversized log aside. Silent on failure, like everything here."""
+    try:
+        if path.stat().st_size >= MAX_LOG_BYTES:
+            path.replace(path.with_name(path.name + ".1"))
+    except OSError:
+        pass
+
 
 def log(message: str) -> None:
     """Append to the capture log. Never raises — this is the failure path itself."""
     try:
         path = grask_home() / "grask.log"
         path.parent.mkdir(parents=True, exist_ok=True)
+        _rotate(path)
         stamp = datetime.now(timezone.utc).isoformat()
         with path.open("a", encoding="utf-8") as handle:
             handle.write(f"{stamp} {message}\n")
@@ -67,7 +89,15 @@ def capture_session(
         # indistinguishable from a session that never happened — which is how
         # `/grask` in a still-open window comes back "you're caught up" about a
         # probe that is forty-five seconds from existing.
-        store.begin_session(session_id=session_id, transcript_path=str(transcript_path))
+        #
+        # It is also the claim, and losing it is the only correct reason to
+        # return silently: `has_session` above is a separate statement, so two
+        # workers can both pass it and only this settles which of them proceeds.
+        if not store.begin_session(
+            session_id=session_id, transcript_path=str(transcript_path)
+        ):
+            log(f"{session_id} already being captured elsewhere; nothing to do")
+            return
 
         session = extract(Path(transcript_path))
 
@@ -191,9 +221,19 @@ def capture_session(
             # The attempts still cost something, and the probe row is where
             # that lands — keeping the question does not make the failed
             # verification free.
+            #
+            # Both columns or neither. `verify` folds stage 4 into `cost_usd`
+            # and `duration_ms` together on the success path, for the reason it
+            # states: two columns on one row covering different sets of stages
+            # are two numbers nobody can put beside each other. Taking only the
+            # money here reintroduced exactly that, on the one population where
+            # it misleads most — the probes stage 4 was billed for and did not
+            # get to judge.
             log(f"{session_id} verification unavailable, probe kept: {exc}")
             if exc.cost_usd is not None:
                 the_probe = replace(the_probe, cost_usd=exc.cost_usd)
+            if exc.duration_ms is not None:
+                the_probe = replace(the_probe, duration_ms=exc.duration_ms)
 
         store.record_session(
             session_id=session.session_id,

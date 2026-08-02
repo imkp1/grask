@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
-from grask.capture import capture_session
+from grask.capture import MAX_LOG_BYTES, capture_session, log
 from grask.llm import LLMError
 from grask.probe import Probe, Rubric
 from grask.seed import Seed
@@ -403,6 +404,114 @@ class TestAStageThatGaveUpStillReportsWhatItSpent:
         assert counts(store) == (1, 1, 1)
         assert store.conn.execute("SELECT cost_usd FROM probes").fetchone()[0] == 0.30
 
+    def test_a_kept_probe_carries_the_failed_verifications_duration_too(
+        self, store: Store, tmp_path: Path
+    ):
+        """Both columns or neither.
+
+        `verify` folds stage 4 into `cost_usd` and `duration_ms` together on the
+        success path, because two columns on one row covering different sets of
+        stages are two numbers nobody can put beside each other. Taking only the
+        money here reintroduced exactly that — and did it on the one population
+        where it misleads most, the probes stage 4 was billed for and never got
+        to judge.
+        """
+
+        def broken(probe):
+            raise LLMError("claude exited 1", cost_usd=0.30, duration_ms=9100)
+
+        capture_session(
+            transcript(tmp_path, "why do we need an idempotency key here?"),
+            store,
+            triage=lambda session: ask_verdict(),
+            seed=lambda dialogue, moment: a_seed(),
+            probe=lambda seed, dialogue: a_probe(),
+            verify=broken,
+        )
+
+        row = store.conn.execute("SELECT cost_usd, duration_ms FROM probes").fetchone()
+        assert (row["cost_usd"], row["duration_ms"]) == (0.30, 9100)
+
+
+class TestOneWorkerPerSession:
+    """`has_session` and `begin_session` are two statements, so two workers can
+    both pass the first one. The claim has to be settled by the second.
+
+    The window is real: SessionEnd can fire twice for one session, and
+    `capture_run` walks the corpus while the hook is live. Both workers used to
+    run the whole four-call pipeline and both used to write — `record_session`
+    no-ops for the loser, but `add_seed` and `add_probe` had no such guard, so
+    one session produced two seeds and two probes and the developer was asked
+    the same question twice.
+    """
+
+    def _capture(self, store: Store, path: Path):
+        capture_session(
+            path,
+            store,
+            triage=lambda session: ask_verdict(),
+            seed=lambda dialogue, moment: a_seed(),
+            probe=lambda seed, dialogue: a_probe(),
+            verify=lambda probe: probe,
+        )
+
+    def test_a_second_worker_past_the_guard_writes_nothing(
+        self, store: Store, tmp_path: Path, monkeypatch
+    ):
+        path = transcript(tmp_path, "why do we need an idempotency key here?")
+        # Both workers checked before either wrote a verdict. That is the race,
+        # and it is the only way to reach the claim from two sides at once.
+        monkeypatch.setattr(Store, "has_session", lambda self, session_id: False)
+
+        self._capture(store, path)
+        self._capture(store, path)
+
+        assert counts(store) == (1, 1, 1)
+
+    def test_the_loser_never_reaches_a_model(
+        self, store: Store, tmp_path: Path, monkeypatch
+    ):
+        """Returning early is worth having only if it happens before the spend."""
+        path = transcript(tmp_path, "why do we need an idempotency key here?")
+        monkeypatch.setattr(Store, "has_session", lambda self, session_id: False)
+        calls = []
+
+        def counting_triage(session):
+            calls.append(session.session_id)
+            return ask_verdict()
+
+        for _ in range(2):
+            capture_session(
+                path,
+                store,
+                triage=counting_triage,
+                seed=lambda dialogue, moment: a_seed(),
+                probe=lambda seed, dialogue: a_probe(),
+                verify=lambda probe: probe,
+            )
+
+        assert len(calls) == 1
+
+    def test_a_worker_that_died_mid_flight_can_be_taken_over(
+        self, store: Store, tmp_path: Path, monkeypatch
+    ):
+        """The other direction. Refusing every conflict would jam a session
+        forever behind a marker its worker never got to replace — which is the
+        recovery path `has_session` already opens, and this must not close."""
+        path = transcript(tmp_path, "why do we need an idempotency key here?")
+        store.begin_session(session_id=path.stem, transcript_path=str(path))
+        # Age the marker past the staleness window: the worker is gone.
+        store.conn.execute(
+            "UPDATE sessions SET triaged_at = ?",
+            ((datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(),),
+        )
+        store.conn.commit()
+
+        self._capture(store, path)
+
+        assert counts(store) == (1, 1, 1)
+        assert store.conn.execute("SELECT verdict FROM sessions").fetchone()[0] == "ask"
+
 
 class TestDurationReachesTheRow:
     """Each stage times itself; capture is the only thing that can persist it.
@@ -564,3 +673,38 @@ def test_a_missing_transcript_does_not_raise(store: Store, tmp_path: Path, monke
     monkeypatch.setenv("GRASK_HOME", str(tmp_path))
     capture_session(tmp_path / "gone.jsonl", store)
     assert (tmp_path / "grask.log").exists()
+
+
+class TestTheLogIsBounded:
+    """A file a detached worker appends to on every session end, forever, with
+    nothing that ever truncates it, is unbounded by construction — and the
+    tracebacks it holds are the biggest lines it writes."""
+
+    def test_an_oversized_log_is_rotated_before_the_next_write(self, tmp_path: Path):
+        log_file = tmp_path / "grask.log"
+        log_file.write_text("x" * (MAX_LOG_BYTES + 1), encoding="utf-8")
+
+        log("the line that tipped it over")
+
+        assert (tmp_path / "grask.log.1").stat().st_size == MAX_LOG_BYTES + 1
+        assert log_file.read_text(encoding="utf-8").endswith("tipped it over\n")
+        assert log_file.stat().st_size < MAX_LOG_BYTES
+
+    def test_a_small_log_is_left_alone(self, tmp_path: Path):
+        log("first")
+        log("second")
+
+        assert not (tmp_path / "grask.log.1").exists()
+        assert len((tmp_path / "grask.log").read_text(encoding="utf-8").splitlines()) == 2
+
+    def test_only_one_generation_is_kept(self, tmp_path: Path):
+        """The log is a debugging aid for the capture that just failed, not an
+        audit trail. A second generation doubles the ceiling to hold traffic
+        nobody reads."""
+        for marker in ("oldest", "newer"):
+            (tmp_path / "grask.log").write_text(
+                marker + "y" * MAX_LOG_BYTES, encoding="utf-8"
+            )
+            log("tip")
+
+        assert (tmp_path / "grask.log.1").read_text(encoding="utf-8").startswith("newer")

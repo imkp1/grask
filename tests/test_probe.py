@@ -19,13 +19,16 @@ from pathlib import Path
 
 import pytest
 
+from grask import ask, cli, verify
 from grask.dialogue import Dialogue, Reply
 from grask.llm import Completion, LLMError
 from grask.probe import (
     CONSEQUENCE_FRAME,
     DEFAULT_FRAME,
     FRAMES,
+    LETTERS,
     MAX_ATTEMPTS,
+    MAX_OPTIONS,
     MECHANISM_FRAME,
     Rubric,
     build_prompt,
@@ -55,7 +58,7 @@ DIALOGUE = Dialogue(
     session_id="0198e4f1",
     path=Path("/tmp/0198e4f1.jsonl"),
     events=[
-        Turn(text="why did GH#4923 not link anything?", timestamp=None, index=0),
+        Turn(text="why did GH#4923 not link anything?", index=0),
         Reply(text="Because GitHub only autolinks #N after a non-word character.", index=1),
     ],
 )
@@ -396,3 +399,28 @@ class TestFraming:
             prompt = build_prompt(replace(SEED, signal=signal), DIALOGUE)
             assert "exactly ONE of" in prompt
         assert "has no answer key and is not a probe" in CONSEQUENCE_FRAME
+
+
+class TestTheOptionAlphabetIsOwnedOnce:
+    """`ask` and `verify` label a probe's options with letters, and `cli`
+    restricts `--pick` to them. All three read `probe.LETTERS`.
+
+    They did not: `ask` had five letters and `verify` had eight, for the same
+    job on the same object. Two constants of different lengths do not disagree
+    until one is asked something the other would answer differently, and nothing
+    fails when they do.
+    """
+
+    def test_every_surface_reads_the_same_string(self):
+        assert ask.LETTERS is LETTERS
+        assert verify.LETTERS is LETTERS
+        assert cli.LETTERS is LETTERS
+
+    def test_it_is_wide_enough_for_any_probe_this_stage_writes(self):
+        assert len(LETTERS) >= MAX_OPTIONS
+
+    def test_it_is_wider_than_the_generator_on_purpose(self):
+        """`ask` grades what is in the database, not what today's stage 3 would
+        produce — a row stored before the cap existed may carry a fifth option,
+        and it stays gradable in the terminal."""
+        assert len(LETTERS) > MAX_OPTIONS

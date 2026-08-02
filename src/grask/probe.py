@@ -28,6 +28,25 @@ PROBE_KEYS = ("question", "options", "correct", "explanation")
 MIN_OPTIONS = 3
 MAX_OPTIONS = 4  # Claude's native question UI takes at most 4 options.
 
+# The labels an option is shown under, and therefore the hard ceiling on how
+# many options a stored row may carry and still be gradable: `ask` reads a pick
+# as an index into this string.
+#
+# One definition, here, because it was two. `ask` had five letters and `verify`
+# had eight, for the same job — labelling the options of a probe that can never
+# hold more than `MAX_OPTIONS` of them. Two alphabets of different lengths do
+# not disagree until one of them is asked a question the other would answer
+# differently, which is the kind of divergence nothing fails on.
+#
+# It lives in `probe` rather than in `ask` because `probe` is what options are,
+# and because `ask`, `verify`, and `cli` all already import from here — putting
+# it in any of the three would mean the other two importing across.
+#
+# Longer than `MAX_OPTIONS` deliberately: stage 3 will not write a fifth option,
+# but a row stored before that cap existed may carry one, and `ask` grades what
+# is in the database rather than what today's generator would produce.
+LETTERS = "abcde"
+
 # One question, ~20 seconds. A second question stapled on turns an encounter into
 # a quiz, and a quiz is a destination — the thing the whole trigger-based design
 # exists to avoid.

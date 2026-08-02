@@ -146,7 +146,6 @@ class TestSkip:
         result = ask(PENDING, ScriptedConsole([""]))
 
         assert result.outcome == SKIPPED
-        assert result.confidence is None
         assert result.turns == ()
 
     def test_skipping_still_shows_the_answer(self):

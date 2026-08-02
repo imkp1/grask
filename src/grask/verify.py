@@ -28,7 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 from grask.llm import LLMError, complete, extract_json_array
-from grask.probe import Probe
+from grask.probe import LETTERS, Probe
 
 VERDICT_KEYS = ("index", "true", "reason")
 
@@ -36,8 +36,6 @@ VERDICT_KEYS = ("index", "true", "reason")
 # the rest of the pipeline; the observed failure was 2 of 47 and both were the
 # same shape (the judge answering in prose instead of JSON).
 MAX_ATTEMPTS = 3
-
-LETTERS = "abcdefgh"
 
 
 class ProbeUnverified(LLMError):

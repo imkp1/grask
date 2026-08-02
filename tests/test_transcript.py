@@ -161,15 +161,6 @@ class TestMetadata:
         path = write_transcript(tmp_path, [human("one"), tool_result("x"), human("two")])
         assert [t.index for t in extract(path).turns] == [0, 1]
 
-    def test_parses_timestamp(self, tmp_path):
-        session = extract(write_transcript(tmp_path, [human("hi")]))
-        assert session.turns[0].timestamp is not None
-        assert session.turns[0].timestamp.year == 2026
-
-    def test_bad_timestamp_is_none_not_fatal(self, tmp_path):
-        session = extract(write_transcript(tmp_path, [human("hi", ts="not-a-date")]))
-        assert session.turns[0].timestamp is None
-
 
 class TestQuestionHeuristic:
     """Crude by design — it ranks candidates, it does not decide anything."""
@@ -181,11 +172,11 @@ class TestQuestionHeuristic:
             "is that safe?",
             "how does it retry",
         ]:
-            assert Turn(text, None, 0).is_question, text
+            assert Turn(text, 0).is_question, text
 
     def test_ignores_plain_directives(self):
         for text in ["add a retry wrapper", "commit this", "run the tests"]:
-            assert not Turn(text, None, 0).is_question, text
+            assert not Turn(text, 0).is_question, text
 
 
 class TestDiscovery:

@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from grask.probe import Rubric
+from grask.probe import LETTERS, Rubric
 
 # Written to a TEXT column and grouped on by hand later, so the strings are the
 # schema. `premise_rejected` is its own outcome rather than a flavour of skip:
@@ -31,9 +31,8 @@ ERROR = "error"
 
 WRONG = "/wrong"
 
-# Option letters, and therefore the hard cap on how many options a stored row
-# may carry and still be served.
-LETTERS = "abcde"
+# `LETTERS` is imported rather than defined here: see `probe.LETTERS`, which
+# owns it because options are what `probe` produces.
 
 
 class Console(Protocol):
@@ -82,9 +81,6 @@ class Interrogation:
 
     probe_id: int
     outcome: str
-    # Always None since the confidence round was cut; the column stays nullable
-    # so historical rows keep their numbers.
-    confidence: int | None
     objection: str | None
     turns: tuple[AnswerTurn, ...]
     cost_usd: float | None
@@ -149,7 +145,6 @@ def resolution(
     return Interrogation(
         probe_id=pending.probe_id,
         outcome=outcome,
-        confidence=None,
         objection=objection,
         turns=turns,
         cost_usd=0.0,

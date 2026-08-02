@@ -17,6 +17,7 @@ enforced here and tested rather than trusted.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from importlib import resources
@@ -60,9 +61,30 @@ def _load_settings(path: Path) -> dict[str, Any]:
 
 def _write_settings(path: Path, settings: dict[str, Any]) -> None:
     """Write settings back with stable, human-friendly formatting and a trailing
-    newline, so a diff of what we changed stays small."""
+    newline, so a diff of what we changed stays small.
+
+    Atomically: serialize, write a sibling temp file, then rename over the
+    target. `os.replace` is atomic within a filesystem, so a reader either sees
+    the whole old file or the whole new one and never a half-written prefix.
+
+    This is the file the module docstring calls out as one the developer did not
+    ask us to touch, and settings.json is what Claude Code needs to start. A
+    plain `write_text` truncates first and fills after, so a crash, a full disk,
+    or a machine losing power between those two costs the developer every hook,
+    permission rule, and preference in it — to add one line. The temp file is a
+    sibling rather than in the system temp dir because a rename across
+    filesystems is not atomic and not always permitted.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+    text = json.dumps(settings, indent=2) + "\n"
+    tmp = path.with_name(f"{path.name}.grask-tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        # A temp file left behind is litter next to the file we were protecting.
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _session_end_groups(settings: dict[str, Any]) -> list[Any]:
@@ -174,25 +196,58 @@ def write_runner_shim(root: str, home: Path | None = None) -> Path:
     return shim
 
 
+UNREADABLE = """\
+settings: {path} could not be read: {error}
+
+grask will not edit a settings file it cannot parse — merging into a guess is
+how the rest of that file gets lost. Fix the JSON (or move the file aside to
+start fresh) and run `grask install` again. Nothing has been changed."""
+
+
+def _settings_or_none(path: Path) -> dict[str, Any] | None:
+    """Parsed settings, or None after explaining why not.
+
+    `install` and `uninstall` both edit this file, and both used to let a
+    `JSONDecodeError` out of `_load_settings` as an unhandled traceback — on the
+    first command a new user runs, about a file grask did not write. Every other
+    reader here (`hook_configured`, `_checks`) already treats an unparseable
+    settings file as an answer rather than a crash; these two are the ones that
+    write, so for them it has to be a refusal.
+    """
+    try:
+        return _load_settings(path)
+    except (ValueError, OSError) as exc:  # JSONDecodeError is a ValueError
+        print(UNREADABLE.format(path=path, error=exc))
+        return None
+
+
 def install(skills: Path | None = None, settings: Path | None = None) -> int:
     """Write the skill and merge the hook. Prints what it did; validates that both
     grask-owned surfaces are in place before claiming success."""
     skills = skills or skills_dir()
     settings = settings or settings_path()
 
+    # Before the skill, not after. Both surfaces have to end up wired for an
+    # install to mean anything, so failing on the second one having already
+    # written the first leaves a half-configured machine and a non-zero exit
+    # that does not say which half landed.
+    data = _settings_or_none(settings)
+    if data is None:
+        return 1
+
     skill_file = _write_skill(skills)
     print(f"skill:  {skill_file}")
 
-    data = _load_settings(settings)
     if merge_hook(data):
         _write_settings(settings, data)
         print(f"hook:   added SessionEnd hook to {settings}")
     else:
         print(f"hook:   already present in {settings}")
 
-    # Validate only what grask owns.
-    wired = _command_present(_session_end_groups(_load_settings(settings)), HOOK_COMMAND)
-    if not (skill_file.is_file() and wired):
+    # Validate only what grask owns, and by re-reading — `hook_configured` never
+    # raises, which is what the check after a write wants: a file we can no
+    # longer parse is a failed install to report, not a second traceback.
+    if not (skill_file.is_file() and hook_configured(settings)):
         print("install did not leave grask's configuration in place")
         return 1
     print("grask is configured. run `grask doctor` to check the environment.")
@@ -214,7 +269,12 @@ def uninstall(skills: Path | None = None, settings: Path | None = None) -> int:
         print(f"skill:  nothing at {skill_dir}")
 
     if settings.exists():
-        data = _load_settings(settings)
+        data = _settings_or_none(settings)
+        if data is None:
+            # The skill is already gone, so this is a partial uninstall — say so
+            # rather than exiting 0 on a machine that still has the hook wired.
+            print(f"data:   left untouched at {grask_home()}")
+            return 1
         if remove_hook(data):
             _write_settings(settings, data)
             print(f"hook:   removed grask's SessionEnd hook from {settings}")
@@ -301,10 +361,11 @@ def _checks(skills: Path, settings: Path) -> list[tuple[str, bool, str]]:
     and it stands in for both surfaces so a healthy plugin install does not read
     as two failures."""
     skill_file = skills / "grask" / "SKILL.md"
-    try:
-        wired = _command_present(_session_end_groups(_load_settings(settings)), HOOK_COMMAND)
-    except (ValueError, json.JSONDecodeError):
-        wired = False
+    # `hook_configured` is this same read, already written and already
+    # never-raising. Spelling it out a second time here meant two answers to
+    # "is the hook wired" that had drifted apart once: this one did not treat an
+    # unreadable settings file as unwired for the same set of exceptions.
+    wired = hook_configured(settings)
 
     shim = grask_home() / "grask"
     via_plugin = shim.is_file()

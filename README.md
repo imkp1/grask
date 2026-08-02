@@ -154,6 +154,7 @@ beyond a probe id and your pick.
 
 ```bash
 grask          # ask the next pending question, or say there's nothing
+grask stats    # what it has asked you, and how it went
 ```
 
 You get one question, three or four options, and one line of orientation about which
@@ -161,6 +162,11 @@ session it came from. Pick a letter. `enter` skips. `/wrong` rejects the premise
 question misreads what happened.
 
 Questions expire after 7 days. A probe about work you did last week is a quiz.
+
+`grask stats` is read-only and free — it asks nothing and consumes nothing. It prints
+counts and the questions you were recently asked, and deliberately no percentage: one
+probe cannot identify understanding, so a score over a handful of them asserts something
+grask does not know, and turns a twenty-second check into a number to protect.
 
 ## Privacy — read this before installing
 

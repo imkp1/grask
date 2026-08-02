@@ -265,7 +265,7 @@ def parse_moments(session: Session, completion: Completion) -> tuple[list[Moment
         if quote is None or normalize(quote) not in normalize(by_index[turn_index].text):
             rejected.append(f"{label}: quote not found in that turn")
             continue
-        if signal == "asked_why" and not Turn(text=quote, timestamp=None, index=0).is_question:
+        if signal == "asked_why" and not Turn(text=quote, index=0).is_question:
             rejected.append(f"{label}: signal is asked_why but the quote asks nothing")
             continue
 

@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 import grask.install as install_mod
 from grask.install import (
     HOOK_COMMAND,
@@ -312,3 +314,91 @@ def test_doctor_counts_the_plugin_shim_as_wired(tmp_path: Path, monkeypatch, cap
     out = capsys.readouterr().out
     assert code == 0
     assert "provided by the plugin" in out
+
+
+class TestAnUnreadableSettingsFile:
+    """Both writers used to let a JSONDecodeError out as a traceback — on the
+    first command a new user runs, about a file grask did not write.
+
+    Every other reader here already treats an unparseable settings file as an
+    answer rather than a crash. These two are the ones that write, so for them
+    it has to be a refusal: merging into a guess is how the rest of that file
+    gets lost.
+    """
+
+    def _broken(self, tmp_path: Path) -> Path:
+        settings = tmp_path / "settings.json"
+        settings.write_text('{"hooks": {,}', encoding="utf-8")
+        return settings
+
+    def test_install_refuses_rather_than_raising(self, tmp_path: Path, capsys):
+        settings = self._broken(tmp_path)
+
+        code = install(skills=tmp_path / "skills", settings=settings)
+
+        assert code == 1
+        assert "could not be read" in capsys.readouterr().out
+        # And it changed nothing, including the file it could not parse.
+        assert settings.read_text(encoding="utf-8") == '{"hooks": {,}'
+
+    def test_install_does_not_leave_half_a_configuration(self, tmp_path: Path):
+        """The skill used to be written before settings were read, so a failure
+        on the second surface left the first one in place and an exit code that
+        did not say which half landed."""
+        install(skills=tmp_path / "skills", settings=self._broken(tmp_path))
+
+        assert not (tmp_path / "skills" / "grask" / "SKILL.md").exists()
+
+    def test_uninstall_reports_the_partial_removal(self, tmp_path: Path, capsys):
+        skills = tmp_path / "skills"
+        settings = tmp_path / "settings.json"
+        settings.write_text("{}", encoding="utf-8")
+        install(skills=skills, settings=settings)
+        settings.write_text('{"hooks": {,}', encoding="utf-8")
+
+        code = uninstall(skills=skills, settings=settings)
+
+        assert code == 1, "the hook is still wired; exiting 0 would claim otherwise"
+        assert "could not be read" in capsys.readouterr().out
+
+
+class TestSettingsAreWrittenAtomically:
+    """settings.json is what Claude Code needs to start, and grask edits it to
+    add one line. A plain `write_text` truncates first and fills after, so a
+    crash between those two costs the developer every hook, permission rule, and
+    preference in it."""
+
+    def test_a_failed_write_leaves_the_original_intact(self, tmp_path: Path, monkeypatch):
+        settings = tmp_path / "settings.json"
+        original = json.dumps({"hooks": {"SessionEnd": [_foreign_group()]}}, indent=2)
+        settings.write_text(original, encoding="utf-8")
+
+        def full_disk(self, *args, **kwargs):
+            raise OSError("No space left on device")
+
+        monkeypatch.setattr(Path, "write_text", full_disk)
+        with pytest.raises(OSError):
+            install_mod._write_settings(settings, {"hooks": {}})
+
+        assert settings.read_text(encoding="utf-8") == original
+
+    def test_no_temp_file_is_left_behind(self, tmp_path: Path, monkeypatch):
+        settings = tmp_path / "settings.json"
+        settings.write_text("{}", encoding="utf-8")
+
+        def full_disk(self, *args, **kwargs):
+            raise OSError("No space left on device")
+
+        monkeypatch.setattr(Path, "write_text", full_disk)
+        with pytest.raises(OSError):
+            install_mod._write_settings(settings, {"hooks": {}})
+
+        assert list(tmp_path.iterdir()) == [settings]
+
+    def test_an_ordinary_write_still_lands(self, tmp_path: Path):
+        settings = tmp_path / "settings.json"
+
+        install_mod._write_settings(settings, {"hooks": {"SessionEnd": [_grask_group()]}})
+
+        assert json.loads(settings.read_text(encoding="utf-8"))["hooks"]["SessionEnd"]
+        assert settings.read_text(encoding="utf-8").endswith("\n")

@@ -11,10 +11,17 @@ and failure-rate are the two numbers that say whether any of this is working, an
 a table you have to remember to populate is a table that lies. It is also what
 makes capture idempotent — a session_id already present means we have seen it,
 whatever we concluded.
+
+Idempotent, and singly-owned: `begin_session` returns whether the caller won the
+session, because "already present" is a race when two workers ask at once and
+only the INSERT is atomic. `record_session` refusing to overwrite a terminal
+verdict is not enough on its own — `seeds` and `probes` have no such refusal, so
+a loser that kept running wrote a second question about the same session.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sqlite3
@@ -133,6 +140,19 @@ CAPTURING = "capturing"
 # transcript, because a marker with no way out is how a queue jams permanently.
 CAPTURE_STALE_MINUTES = 30
 
+# How long a write waits for another connection's lock before giving up. The
+# writers are detached capture workers, one per ended session, and they overlap
+# whenever two sessions end close together — the pipeline holds each of them for
+# ~45s, so "two at once" is ordinary rather than rare.
+#
+# Well above sqlite3's 5s default, because the cost of the two directions is not
+# symmetric. Waiting longer costs a background worker some idle seconds nobody
+# sees; giving up early costs an uncaught OperationalError, which for `grask
+# serve` is a traceback in front of the developer and for a worker is a captured
+# session silently lost. The actual writes are milliseconds — this budget is for
+# queueing behind someone else's, never for our own.
+BUSY_TIMEOUT_SECONDS = 30.0
+
 # The verdict a session carries when stage 4 read the question grask wrote for
 # it and would not vouch for the answer key. A terminal verdict like `silent`
 # and `error`, and deliberately neither of them: the session was worth asking
@@ -188,6 +208,41 @@ def _json_list(raw: str | None) -> list[str]:
 
 
 @dataclass(frozen=True)
+class AnsweredProbe:
+    """One probe the developer actually answered, for the history view."""
+
+    asked_at: str
+    outcome: str
+    topic: str
+    question: str
+
+
+@dataclass(frozen=True)
+class Stats:
+    """What grask has done for this developer, as they would count it.
+
+    Deliberately not a score. `passed` and `failed` are here because a developer
+    who answers questions is owed the record of them, but design.md's rule that
+    one probe cannot identify understanding means nothing may present them as a
+    grade — `survey.py` and the batch runners already cover the pipeline
+    numbers, and this is the only view built for the person being asked.
+
+    `raised` counts probes minted, which is not `answered` plus `pending`: a
+    probe can expire unasked, and one recorded as an `error` was consumed
+    without ever being a question.
+    """
+
+    sessions: int
+    raised: int
+    answered: int
+    passed: int
+    failed: int
+    skipped: int
+    pending: int
+    recent: tuple[AnsweredProbe, ...]
+
+
+@dataclass(frozen=True)
 class UnprobedSeed:
     """A stored seed with no question written from it, and where to find its dialogue."""
 
@@ -229,14 +284,34 @@ class Store:
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or grask_home() / "grask.db"
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(self.path)
+        self.conn = sqlite3.connect(self.path, timeout=BUSY_TIMEOUT_SECONDS)
         self.conn.row_factory = sqlite3.Row
         # Off by default in sqlite, and the one thing keeping an orphaned seed
         # from outliving the session that explains it.
         self.conn.execute("PRAGMA foreign_keys = ON")
+        self._set_journal_mode()
         self.conn.executescript(SCHEMA)
         self._migrate()
         self.conn.commit()
+
+    def _set_journal_mode(self) -> None:
+        """Ask for WAL, and carry on with whatever sqlite grants.
+
+        The default rollback journal takes an exclusive lock for the whole of a
+        write, so a capture worker's commit blocks `grask serve` from *reading*.
+        WAL lets the read proceed against the pre-write snapshot, which is the
+        difference between a 60ms `serve` and one that queues behind a
+        background worker the developer cannot see.
+
+        Not asserted, because WAL needs shared memory the filesystem may not
+        provide — a `GRASK_HOME` on NFS or some network mounts refuses it. There
+        the old journal mode is still correct, only less concurrent, and
+        `BUSY_TIMEOUT_SECONDS` is what carries it. A database that will not take
+        WAL is not a database grask should decline to open.
+        """
+        # pragma: no cover on the suppression - filesystem dependent
+        with contextlib.suppress(sqlite3.DatabaseError):
+            self.conn.execute("PRAGMA journal_mode = WAL")
 
     def _migrate(self) -> None:
         """Bring an older database up to the current schema, one column at a time.
@@ -273,6 +348,16 @@ class Store:
             datetime.now(timezone.utc) - timedelta(minutes=CAPTURE_STALE_MINUTES)
         ).isoformat()
 
+    def _ttl_cutoff(self) -> str:
+        """The timestamp a probe must be newer than to still be worth asking.
+
+        Four queries need this — `next_probe`, `empty_reason`, `unprobed_seeds`,
+        `stats` — and each had spelled it out. A probe the queue serves but the
+        count calls expired is two answers to one question, and four copies of
+        an expression is four chances to get one of them wrong.
+        """
+        return (datetime.now(timezone.utc) - timedelta(days=PROBE_TTL_DAYS)).isoformat()
+
     def has_session(self, session_id: str) -> bool:
         """Whether this session is already accounted for, and must not be re-captured.
 
@@ -293,8 +378,11 @@ class Store:
         ).fetchone()
         return row is not None
 
-    def begin_session(self, *, session_id: str, transcript_path: str) -> None:
-        """Mark a session as being captured, before the first model call.
+    def begin_session(self, *, session_id: str, transcript_path: str) -> bool:
+        """Claim a session for capture, before the first model call.
+
+        Returns whether this caller owns it. **A False means stop**: someone
+        else is already capturing this session, or already finished it.
 
         Deliberately carries none of triage's fields: nothing is known yet, and
         a row that guessed would be a row `record_session` has to correct.
@@ -302,21 +390,43 @@ class Store:
         replaces it — a marker nobody can read for more than
         `CAPTURE_STALE_MINUTES` does not need two columns to say when it was
         written.
+
+        The return value is the whole of the concurrency control, and it is why
+        the conflict clause tests staleness rather than just `capturing`.
+        `has_session` and this are two statements, so two workers can both pass
+        the first one; the INSERT is where that has to be settled, because it is
+        the only step sqlite makes atomic for us. Four outcomes, and the caller
+        needs to tell them apart:
+
+        - no row: inserted, we own it.
+        - a `capturing` row past `CAPTURE_STALE_MINUTES`: the previous worker
+          died, we take it over. This is the recovery path `has_session`
+          already opens, and refusing here would jam the session forever.
+        - a `capturing` row still inside the window: a live worker has it. Lose.
+        - any terminal verdict: it is done. Lose.
+
+        Only the first two update a row, so `rowcount` says which pair we are
+        in. Without this, both workers ran the whole four-call pipeline and both
+        wrote — `record_session` no-ops for the loser, but `add_seed` and
+        `add_probe` do not, so the developer was asked one question twice and
+        billed twice for it.
         """
-        self.conn.execute(
+        cursor = self.conn.execute(
             "INSERT INTO sessions"
             " (session_id, transcript_path, cwd, git_branch, verdict, triaged_at)"
             " VALUES (:id, :path, NULL, NULL, :capturing, :now)"
             " ON CONFLICT(session_id) DO UPDATE SET triaged_at = :now"
-            "  WHERE sessions.verdict = :capturing",
+            "  WHERE sessions.verdict = :capturing AND sessions.triaged_at < :cutoff",
             {
                 "id": session_id,
                 "path": transcript_path,
                 "capturing": CAPTURING,
+                "cutoff": self._capture_cutoff(),
                 "now": _now(),
             },
         )
         self.conn.commit()
+        return cursor.rowcount > 0
 
     def record_session(
         self,
@@ -429,7 +539,7 @@ class Store:
         options are not valid JSON pass the filter deliberately: they must be
         served so the caller can record the `error` they are.
         """
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=PROBE_TTL_DAYS)).isoformat()
+        cutoff = self._ttl_cutoff()
         row = self.conn.execute(
             "SELECT p.id, p.question, p.options, p.correct_idx, p.explanation,"
             " p.created_at, s.topic, s.hypothesis"
@@ -482,7 +592,7 @@ class Store:
         NULL) counts as `caught_up`: probes exist, none can be served, and
         claiming nothing was ever captured would be the falser of the two.
         """
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=PROBE_TTL_DAYS)).isoformat()
+        cutoff = self._ttl_cutoff()
         unasked = "FROM probes p LEFT JOIN asks a ON a.probe_id = p.id WHERE a.id IS NULL"
         row = self.conn.execute(
             "SELECT"
@@ -546,14 +656,19 @@ class Store:
         now = _now()
         with self.conn:
             cursor = self.conn.execute(
+                # `confidence` is not in the column list. The confidence round
+                # was cut, so no interrogation has carried one since — it was a
+                # field that could only ever be None, threaded from a dataclass
+                # through a bind parameter to write a NULL the column already
+                # defaults to. The column itself stays: rows from before the cut
+                # hold real numbers, and dropping it would throw those away.
                 "INSERT INTO asks"
-                " (probe_id, asked_at, confidence, outcome, objection, turns, cost_usd,"
+                " (probe_id, asked_at, outcome, objection, turns, cost_usd,"
                 "  completed_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     interrogation.probe_id,
                     now,
-                    interrogation.confidence,
                     interrogation.outcome,
                     interrogation.objection,
                     len(interrogation.turns),
@@ -572,7 +687,7 @@ class Store:
 
         return ask_id
 
-    def unprobed_seeds(self, *, within_days: int = PROBE_TTL_DAYS) -> list[UnprobedSeed]:
+    def unprobed_seeds(self) -> list[UnprobedSeed]:
         """Seeds that never got a question, newest first.
 
         Two paths leave one behind: stage 4 discarding what stage 3 wrote, and
@@ -582,15 +697,17 @@ class Store:
         one back up, which made "the seed is still stored" a claim with no
         redemption behind it.
 
-        Bounded by `within_days` because stage 3 needs the dialogue, not just
+        Bounded by `PROBE_TTL_DAYS` because stage 3 needs the dialogue, not just
         the seed: re-asking a seed whose probe would be born expired spends a
-        model call on a question `next_probe` will never serve.
+        model call on a question `next_probe` will never serve. That is the same
+        window `next_probe` enforces and it is not separately tunable — it was a
+        parameter, and in every call it has ever had it took its default.
 
         `transcript_path` comes back unchecked. Transcripts rotate, and whether
         this one still exists is a filesystem question the caller has to ask at
         the moment it reads the file anyway.
         """
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=within_days)).isoformat()
+        cutoff = self._ttl_cutoff()
         rows = self.conn.execute(
             "SELECT s.id, s.session_id, s.turn, s.signal, s.topic, s.quotes, s.refs,"
             "  s.decision, s.hypothesis, s.cost_usd, s.duration_ms, ss.transcript_path"
@@ -620,6 +737,64 @@ class Store:
             )
             for row in rows
         ]
+
+    def stats(self, *, recent: int = 10) -> Stats:
+        """The developer's own record: what was asked, and how it went.
+
+        Everything grask measured was measured for whoever is tuning the
+        pipeline — keep rates, spend, discard rates, all of it read out of
+        sqlite by hand or by a `python -m` batch tool. The person the questions
+        are *for* had no way to see the twenty-five they had answered, which
+        made the one durable artifact of using grask the one thing it would not
+        show them.
+
+        `pending` uses the same TTL and NULL-options filters as `next_probe`, so
+        the number here is what `/grask` would actually serve rather than a
+        count of rows. Two views of the queue that disagree are worse than one.
+        """
+        cutoff = self._ttl_cutoff()
+        counts = self.conn.execute(
+            "SELECT"
+            "  (SELECT COUNT(*) FROM sessions WHERE verdict != :capturing) AS sessions,"
+            "  (SELECT COUNT(*) FROM probes) AS raised,"
+            "  (SELECT COUNT(*) FROM asks) AS answered,"
+            "  (SELECT COUNT(*) FROM asks WHERE outcome = 'passed') AS passed,"
+            "  (SELECT COUNT(*) FROM asks WHERE outcome = 'failed') AS failed,"
+            "  (SELECT COUNT(*) FROM asks WHERE outcome = 'skipped') AS skipped,"
+            "  (SELECT COUNT(*) FROM probes p LEFT JOIN asks a ON a.probe_id = p.id"
+            "     WHERE a.id IS NULL AND p.created_at >= :cutoff"
+            "     AND p.options IS NOT NULL) AS pending",
+            {"capturing": CAPTURING, "cutoff": cutoff},
+        ).fetchone()
+
+        rows = self.conn.execute(
+            "SELECT a.asked_at, a.outcome, s.topic, p.question"
+            " FROM asks a"
+            " JOIN probes p ON p.id = a.probe_id"
+            " JOIN seeds s ON s.id = p.seed_id"
+            " ORDER BY a.asked_at DESC, a.id DESC"
+            " LIMIT :limit",
+            {"limit": recent},
+        ).fetchall()
+
+        return Stats(
+            sessions=counts["sessions"],
+            raised=counts["raised"],
+            answered=counts["answered"],
+            passed=counts["passed"],
+            failed=counts["failed"],
+            skipped=counts["skipped"],
+            pending=counts["pending"],
+            recent=tuple(
+                AnsweredProbe(
+                    asked_at=row["asked_at"],
+                    outcome=row["outcome"],
+                    topic=row["topic"],
+                    question=row["question"],
+                )
+                for row in rows
+            ),
+        )
 
     def add_probe(self, seed_id: int, probe: Probe) -> int:
         """Store the question, its shuffled options, and the answer key.

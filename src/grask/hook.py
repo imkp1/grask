@@ -19,7 +19,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TextIO
 
-from grask.capture import log
+from grask.capture import _rotate, log
 from grask.storage import grask_home
 
 
@@ -33,6 +33,11 @@ def spawn(transcript_path: str) -> None:
     """
     path = grask_home() / "grask.log"
     path.parent.mkdir(parents=True, exist_ok=True)
+    # The worker inherits this handle for its whole life and writes stdout and
+    # stderr through it, so the size check has to happen before it is opened —
+    # `log`'s own rotation cannot move a file out from under an open fd. Here is
+    # also the one moment per capture when nothing is holding it.
+    _rotate(path)
     handle = path.open("a", encoding="utf-8")
     subprocess.Popen(
         [sys.executable, "-m", "grask.capture", transcript_path],

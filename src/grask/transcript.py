@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -44,10 +43,17 @@ SUBAGENT_DIR = "subagents"
 
 @dataclass
 class Turn:
-    """One thing the developer actually typed."""
+    """One thing the developer actually typed.
+
+    No timestamp. There was one, parsed out of every record on both read paths,
+    and nothing ever read it: a moment is identified by its turn index, a seed
+    stores that index, and every ordering in the pipeline is by position in the
+    file. A field that is written on every turn of every session and read by
+    nobody is not a record of when something happened — it is a parse that
+    cannot be wrong, because nothing depends on it being right.
+    """
 
     text: str
-    timestamp: datetime | None
     index: int
 
     @property
@@ -108,15 +114,6 @@ def normalize(text: str) -> str:
     toward trusting the model instead, which is the wrong direction to be pushed.
     """
     return " ".join(text.split()).lower()
-
-
-def _parse_timestamp(value: object) -> datetime | None:
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
 
 
 def iter_records(path: Path) -> Iterator[dict[str, Any]]:
@@ -184,13 +181,7 @@ def extract(path: Path) -> Session:
         session.git_branch = session.git_branch or record.get("gitBranch")
 
         if (text := human_turn_text(record)) is not None:
-            session.turns.append(
-                Turn(
-                    text=text,
-                    timestamp=_parse_timestamp(record.get("timestamp")),
-                    index=len(session.turns),
-                )
-            )
+            session.turns.append(Turn(text=text, index=len(session.turns)))
             continue
 
         content = message_content(record)

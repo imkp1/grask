@@ -54,6 +54,10 @@ resolved `"$GRASK" …` if you had to fall back.
    ~/.claude/grask/grask serve --json
    ```
 
+   `pending` is `true` when a probe is waiting and `null` when none is. Both
+   arms carry the key, so branch on it rather than on which other fields
+   happen to be present.
+
    If `pending` is null, the queue is empty: relay the `note` field from that
    same JSON and stop. Do not shorten it to "nothing pending" and do not
    generalise across the `reason` codes — `note` already says *why* it is empty,
@@ -75,12 +79,13 @@ resolved `"$GRASK" …` if you had to fall back.
 
    - `question`: a neutral provenance line from `created_at` alone, then the
      full question text — e.g. `from 2026-07-21 · What would happen if …?`.
-     Do NOT put `topic` in the picker: the topic states *why* the probe was
-     raised, and that rationale is the bridge to the graded answer — showing it
-     pre-answer leaks the mechanism under test. The question text carries any
-     file names it needs. The question must be readable inside the picker
-     itself; do not rely on markdown printed before it. Hold `topic` back for
-     step 3.
+     The question text carries any file names it needs. The question must be
+     readable inside the picker itself; do not rely on markdown printed before
+     it. There is nothing else in the payload to add: `serve` deliberately does
+     not send the probe's topic, because the topic states *why* the probe was
+     raised and that rationale is the bridge to the graded answer. It arrives
+     in step 3's `display`, once the answer is settled and it can no longer
+     leak the mechanism under test.
    - `header`: a short constant chip — use `Probe`.
    - One option per stored option, in stored order. Every option needs all
      three fields below; `label` and `description` are required by the question

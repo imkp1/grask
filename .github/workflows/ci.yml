@@ -46,8 +46,20 @@ jobs:
 
       # No network and no model calls: the `calibration` marker is deselected by
       # default in pyproject, and everything else injects test doubles.
+      #
+      # `--cov-fail-under` and not a report nobody reads. A coverage number
+      # printed into a log is a number that drifts down one PR at a time with
+      # nothing objecting; a floor is the part that can fail. It is set at the
+      # level already reached rather than an aspiration, so it ratchets — raise
+      # it when the real number moves, and let it block the change that drops it.
+      #
+      # 84, and nothing is excluded to make that number look better. It would be
+      # 91 without `survey.py` and `triage_run.py`, which are operator scripts
+      # run by hand and never on a developer's machine — but a coverage config
+      # that omits the modules it is embarrassed by measures the wrong thing.
+      # They are in, they are the bulk of the gap, and the floor says so.
       - name: pytest
-        run: uv run pytest -q
+        run: uv run pytest -q --cov=grask --cov-report=term-missing --cov-fail-under=84
 
   # grask's runtime floor is Python 3.8 (requires-python), but its dev toolchain
   # (pytest 9, mypy) needs newer, so 3.8 cannot go in the matrix above. This job
@@ -88,6 +100,10 @@ jobs:
           # an empty queue has to say which of the four kinds of empty it is.
           grask serve --json | grep -q '"pending": null'
           grask serve --json | grep -q '"reason": "never"'
+          # `stats` is the one command a developer runs against a database that
+          # has never been written to, so an empty one must render rather than
+          # divide by zero or crash on a missing table.
+          grask stats | grep -q 'Nothing answered yet'
           # The hook takes its payload on stdin and must exit 0 on anything,
           # including a payload it cannot use. It never has a --help to call.
           echo '{}' | grask-hook

@@ -23,7 +23,6 @@ from typing import Any
 
 from grask.ask import (
     ERROR,
-    LETTERS,
     MARKDOWN,
     PREMISE_REJECTED,
     SKIPPED,
@@ -44,6 +43,7 @@ from grask.install import (
     uninstall,
     write_runner_shim,
 )
+from grask.probe import LETTERS, MAX_OPTIONS
 from grask.storage import PROBE_TTL_DAYS, Store
 
 NOTHING_PENDING = "nothing to ask about."
@@ -76,7 +76,12 @@ TERMINAL_EMPTY_NOTES = {
 
 # Claude's native question UI takes at most 4 options; rows over the cap are
 # left pending for the terminal path rather than consumed.
-MAX_UI_OPTIONS = 4
+#
+# Imported, not redeclared. `probe.MAX_OPTIONS` is the same 4 justified by the
+# same sentence — stage 3 will not write a fifth option *because* this surface
+# could not show it — so the two were one number written down twice, in modules
+# that would have had no way to notice the day they stopped agreeing.
+MAX_UI_OPTIONS = MAX_OPTIONS
 
 # Where Claude Code looks for user-level skills. A skill is one directory
 # holding one SKILL.md, and the directory name is the slash command — so this
@@ -186,13 +191,81 @@ def _next_payload(store, *, max_options: int | None = MAX_UI_OPTIONS) -> dict[st
         if unservable(pending):
             store.record_ask(resolution(pending, ERROR))
             continue
+        # `pending: true` and not merely the absence of `pending: null`. Both
+        # surfaces branch on this key — the skill on `next.pending`, CI on the
+        # served JSON — and a field that is null in one arm and *missing* in the
+        # other asks every reader to know that a missing key means yes.
+        #
+        # `topic` is deliberately not here. The skill is told to keep it out of
+        # the picker because it states why the probe was raised, which is the
+        # bridge to the answer; withholding it is the one thing between a probe
+        # and a leaked mechanism. Sending it anyway and asking the model not to
+        # look is the shape this codebase rejects everywhere else — the same
+        # reasoning that keeps the transcript out of `verify`'s signature rather
+        # than out of its prompt. It reaches the developer in `record`'s
+        # `display`, after the pick, which is the only moment it is safe.
         return {
+            "pending": True,
             "probe_id": pending.probe_id,
             "question": pending.question,
             "options": list(pending.options),
-            "topic": pending.rubric.topic,
             "created_at": pending.created_at,
         }
+
+
+# How a recorded outcome reads back in the history list. `passed` and `failed`
+# get marks and the rest get a dash, matching `ask.VERDICTS` — a developer who
+# saw "✗ Incorrect" after the pick should meet the same character here.
+OUTCOME_MARKS = {
+    "passed": "✓",
+    "failed": "✗",
+    "skipped": "—",
+    "premise_rejected": "—",
+    "error": "—",
+}
+
+NOTHING_ANSWERED = """\
+Nothing answered yet. Run `grask` — or `/grask` inside Claude Code — when a
+probe is waiting, and what you were asked shows up here."""
+
+
+def _stats_block(stats) -> str:
+    """The developer's record, rendered.
+
+    No accuracy percentage, and that is a decision rather than an omission.
+    design.md's rule is that one probe cannot identify understanding; a
+    percentage over a handful of questions asserts exactly that, and it turns
+    the thing meant to be a twenty-second check into a score to protect. The
+    counts are there for whoever wants to divide them.
+    """
+    lines = [
+        f"  sessions seen    {stats.sessions:>4d}",
+        f"  questions raised {stats.raised:>4d}",
+        f"  answered         {stats.answered:>4d}"
+        f"   ({stats.passed} right, {stats.failed} wrong, {stats.skipped} skipped)",
+        f"  waiting for you  {stats.pending:>4d}",
+    ]
+    if not stats.recent:
+        return "\n".join(lines) + "\n\n" + NOTHING_ANSWERED
+
+    lines += ["", "recently asked:", ""]
+    for probe in stats.recent:
+        mark = OUTCOME_MARKS.get(probe.outcome, "—")
+        question = " ".join(probe.question.split())
+        lines.append(f"  {mark} {probe.asked_at[:10]}  {probe.topic}")
+        lines.append(f"      {question[:90]}")
+    return "\n".join(lines)
+
+
+def _stats(store_factory) -> int:
+    """`grask stats`: what grask has asked, and how it went.
+
+    Read-only and free. Everything else that reads the database is either a
+    batch tool that spends money or a delivery surface that consumes a probe.
+    """
+    with store_factory() as store:
+        print(_stats_block(store.stats()))
+    return 0
 
 
 def _serve(store_factory) -> int:
@@ -359,6 +432,9 @@ def main(
     )
 
     sub.add_parser(
+        "stats", help="what grask has asked you, and how it went"
+    )
+    sub.add_parser(
         "install", help="wire the /grask skill and the SessionEnd capture hook into ~/.claude"
     )
     sub.add_parser(
@@ -383,6 +459,8 @@ def main(
         return _serve(store_factory)
     if args.command == "record":
         return _record(args, record_parser, store_factory)
+    if args.command == "stats":
+        return _stats(store_factory)
     if args.command == "install":
         return install()
     if args.command == "uninstall":
