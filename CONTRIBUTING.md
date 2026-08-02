@@ -54,6 +54,17 @@ uv run ruff check .
 uv run mypy
 ```
 
+CI adds one thing these three do not: it runs `pytest` under coverage against a floor, and a
+change that drops total coverage below **84%** fails there whatever the tests say. The floor
+is set at the level already reached rather than an aspiration, so it ratchets — if you raise
+the real number, raise the floor with it. Nothing is excluded from the measurement to flatter
+it (`survey.py` and `triage_run.py` are operator scripts with no tests, and they are the bulk
+of the remaining gap). To see the number locally:
+
+```bash
+uv run pytest --cov=grask --cov-report=term-missing
+```
+
 `mypy` is `strict` against `src/grask`, because the package ships `py.typed` and that is a
 promise to anyone importing it. The two relaxations (`disallow_untyped_defs`,
 `disallow_incomplete_defs`) exist so injected test doubles are not pinned to production
@@ -69,10 +80,20 @@ range first and refuse to run without `--go`.
 uv run python -m grask.survey       # what's in the local transcript corpus (free)
 uv run python -m grask.triage_run   # run stage 1 over the corpus; costs money
 uv run python -m grask.capture_run  # run the full pipeline over past sessions; --go to spend
+uv run python -m grask.reprobe      # re-ask seeds whose question never landed; --go to spend
 ```
 
 `capture_run` skips grask's own project by default. The sessions that end from now on are
 overwhelmingly grask's own, and waiting for the queue to fill measures grask on grask.
+
+`reprobe` is the recovery path for the two places capture stores a seed and no probe — stage 4
+discarding the question, and stage 3 giving up. It re-runs both stages rather than taking a
+cheaper shortcut: re-asking without verifying would reintroduce the defect stage 4 exists to
+catch, on the population most likely to carry it. A seed that fails twice is worth reading as
+a fact about the seed rather than a bad roll.
+
+The developer-facing counterpart is `grask stats`, which is free, consumes nothing, and is the
+only one of these built for someone who is not working on grask.
 
 ## Where things live
 
