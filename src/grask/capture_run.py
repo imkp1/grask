@@ -175,9 +175,10 @@ def outcomes(store: Store, session_ids: Sequence[str]) -> str:
     ]
     if not probes["n"]:
         lines.append("")
-        lines.append("  No probes. Either triage kept nothing, every kept session errored, or")
-        lines.append("  stage 4 discarded every question it was given — the `unverified` count")
-        lines.append("  above says which. Check grask.log before spending on a second batch.")
+        lines.append("  No probes. Either triage kept nothing, stage 2 declined every moment")
+        lines.append("  it was handed, every kept session errored, or stage 4 discarded every")
+        lines.append("  question it was given — the `declined`, `error` and `unverified` counts")
+        lines.append("  above say which. Check grask.log before spending on a second batch.")
     return "\n".join(lines)
 
 

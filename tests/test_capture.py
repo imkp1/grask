@@ -19,8 +19,8 @@ import pytest
 from grask.capture import MAX_LOG_BYTES, capture_session, log
 from grask.llm import LLMError
 from grask.probe import Probe, Rubric
-from grask.seed import Seed
-from grask.storage import Store
+from grask.seed import Seed, SeedDeclined
+from grask.storage import DECLINED, Store
 from grask.triage import Moment, TriageVerdict
 from grask.verify import ProbeUnverified
 
@@ -259,6 +259,31 @@ class TestVerificationGuardsTheQueue:
             store.conn.execute("SELECT verdict FROM sessions").fetchone()["verdict"]
             == "unverified"
         )
+
+    def test_the_discard_reason_is_stored_not_only_logged(
+        self, store: Store, tmp_path: Path
+    ):
+        """The log is not a channel `reprobe` can read.
+
+        The reason is what makes the second attempt a retry rather than a
+        re-roll, and it lived only in `grask.log` — a file rotated at 1 MB and
+        written by a detached worker.
+        """
+
+        def reject(probe):
+            raise ProbeUnverified("no option was judged true: the answer is in a local file")
+
+        capture_session(
+            transcript(tmp_path, "why do we need an idempotency key here?"),
+            store,
+            triage=lambda session: ask_verdict(),
+            seed=lambda dialogue, moment: a_seed(),
+            probe=lambda seed, dialogue: a_probe(),
+            verify=reject,
+        )
+
+        stored = store.conn.execute("SELECT discard_reason FROM sessions").fetchone()
+        assert "the answer is in a local file" in stored["discard_reason"]
 
     def test_a_verifier_call_failure_keeps_the_probe(self, store: Store, tmp_path: Path):
         def broken(probe):
@@ -605,6 +630,69 @@ def test_seed_receives_the_moment_triage_selected(store: Store, tmp_path: Path):
     )
 
     assert seen == {"turn": 0, "topic": "idempotency of the retry path"}
+
+
+class TestADeclinedSeedIsSilenceNotAMalfunction:
+    """Stage 2 is allowed to disagree with triage, and the row has to say which
+    happened.
+
+    Recording a principled decline as `error` would put it in the same bucket as
+    a broken model call — and the error rate is the number that says whether the
+    prompt is working. It is not `silent` either: triage did keep this session,
+    and the count of sessions stage 2 talked triage out of is the only way to
+    see the decline collapsing yield.
+    """
+
+    def _decline(self, store: Store, tmp_path: Path):
+        def declined(dialogue, moment):
+            raise SeedDeclined(
+                "the developer stated the mechanism correctly", cost_usd=0.11
+            )
+
+        capture_session(
+            transcript(tmp_path, "why do we need an idempotency key here?"),
+            store,
+            triage=lambda session: ask_verdict(),
+            seed=declined,
+            probe=lambda seed, dialogue: a_probe(),
+        )
+
+    def test_the_verdict_is_neither_error_nor_silent(self, store: Store, tmp_path: Path):
+        self._decline(store, tmp_path)
+
+        assert store.conn.execute("SELECT verdict FROM sessions").fetchone()[
+            "verdict"
+        ] == DECLINED
+
+    def test_nothing_downstream_is_stored(self, store: Store, tmp_path: Path):
+        self._decline(store, tmp_path)
+
+        assert counts(store) == (1, 0, 0)
+
+    def test_the_decline_still_reports_what_stage_2_cost(self, store: Store, tmp_path: Path):
+        # A decline is a paid-for call. Recording it as free would make the
+        # cheapest-looking outcome the one that quietly spends the most.
+        self._decline(store, tmp_path)
+
+        row = store.conn.execute("SELECT cost_usd, discarded_usd FROM sessions").fetchone()
+        assert (row["cost_usd"], row["discarded_usd"]) == (0.05, 0.11)
+
+    def test_the_reason_is_queryable_not_only_logged(self, store: Store, tmp_path: Path):
+        # A rising decline rate is only diagnosable if what stage 2 kept saying
+        # was missing can be read back. `grask.log` rotates at 1 MB and is
+        # written by a detached worker; the column is the channel that survives.
+        self._decline(store, tmp_path)
+
+        row = store.conn.execute("SELECT discard_reason FROM sessions").fetchone()
+        assert "stated the mechanism correctly" in row["discard_reason"]
+
+    def test_the_reason_reaches_the_log(self, store: Store, tmp_path: Path, monkeypatch):
+        monkeypatch.setenv("GRASK_HOME", str(tmp_path))
+        self._decline(store, tmp_path)
+
+        assert "stated the mechanism correctly" in (tmp_path / "grask.log").read_text(
+            encoding="utf-8"
+        )
 
 
 def test_seed_failure_is_recorded_as_error_not_raised(store: Store, tmp_path: Path, monkeypatch):

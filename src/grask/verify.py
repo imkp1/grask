@@ -100,8 +100,15 @@ distractor" is not a reason.
 
 You have no tools and no access to any repository, file, or transcript. Judge
 from the text below and from general knowledge of how the named technology works.
-Where an option depends on a local detail you cannot check, take the question's
-own stated premises as given and judge the mechanism it asserts on top of them.
+
+Before judging the options, decide whether the QUESTION is answerable at all
+from general technical knowledge plus the premises the question itself states. A
+question may name a local file, flag, or identifier as its setting — take what
+the question says about that as given, and judge the mechanism asserted on top
+of it. But if choosing between the options would require knowing the contents of
+a local file, spec, or script that the question does not quote, then no option
+is a true answer to it: mark every one of them false and say so in the reasons.
+A question only its author can answer teaches nothing to whoever answers it.
 
 ## The question
 
@@ -162,13 +169,24 @@ def parse_verdicts(text: str, expected: int) -> tuple[Verdict, ...]:
     return tuple(verdicts)
 
 
+def _reasons(verdicts: tuple[Verdict, ...] | list[Verdict]) -> str:
+    return "; ".join(f"({LETTERS[v.index]}) {v.reason}" for v in verdicts)
+
+
 def adjudicate(probe: Probe, verdicts: tuple[Verdict, ...]) -> None:
     """Raise unless exactly one option is true and it is the stored key."""
     true = [v for v in verdicts if v.true]
-    reasons = "; ".join(f"({LETTERS[v.index]}) {v.reason}" for v in true)
+    reasons = _reasons(true)
 
     if not true:
-        raise ProbeUnverified(f"no option was judged true: {probe.question!r}")
+        # Every reason, not the empty set of true ones. This branch is where an
+        # unanswerable question lands — the judge marks all four false because
+        # the answer is in a file it cannot read — and it is indistinguishable
+        # from four broken mechanisms unless the reasons come with it. The log
+        # line is the only place that distinction survives.
+        raise ProbeUnverified(
+            f"no option was judged true: {probe.question!r}: {_reasons(verdicts)}"
+        )
 
     if len(true) > 1:
         raise ProbeUnverified(

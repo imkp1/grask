@@ -30,6 +30,7 @@ from grask.probe import (
     MAX_ATTEMPTS,
     MAX_OPTIONS,
     MECHANISM_FRAME,
+    MISCONCEPTION_FRAME,
     Rubric,
     build_prompt,
     frame_for,
@@ -356,6 +357,28 @@ class TestPrompt:
         assert "you asked" in prompt
         assert "mechanism" in prompt
 
+    def test_names_the_kinds_of_wrongness_a_distractor_can_be_built_from(self):
+        """The distractors are where the learning is.
+
+        "A plausible wrong mechanism" is the right rule and no help in writing
+        one: it says what a distractor must be, never what wrongness is made
+        of. The design reaches the same lever from the other end — if passes
+        turn out cheap, the fix named under Limitations is better distractors.
+        """
+        prompt = build_prompt(SEED, DIALOGUE)
+
+        assert "nearby mechanism" in prompt
+        assert "cause and consequence" in prompt
+        assert "invariant" in prompt
+
+    def test_forbids_the_distractors_a_developer_eliminates_without_knowing(self):
+        """A pass bought by eliminating three throwaways measures nothing, and
+        it reads as a pass — the failure mode that makes the whole instrument
+        look like it is working."""
+        prompt = build_prompt(SEED, DIALOGUE)
+
+        assert "shorter version of the correct option" in prompt
+
 
 class TestFraming:
     """Which shape of question the signal earns.
@@ -373,6 +396,21 @@ class TestFraming:
     def test_a_recall_signal_keeps_the_mechanism_frame(self):
         for signal in ("new_pattern", "explained_at_length"):
             assert frame_for(signal) is MECHANISM_FRAME
+
+    def test_explaining_it_back_wrongly_is_not_told_it_was_explained_to(self):
+        """Mechanism-shaped, but not `MECHANISM_FRAME`.
+
+        That one asserts what happened in the session — a pattern went past, or
+        the agent explained at length and it was accepted. On this signal the
+        developer volunteered the account themselves and got it wrong, so the
+        shared text would hand stage 3 a false description of the moment
+        alongside the hypothesis that contradicts it.
+        """
+        frame = frame_for("explained_it_back")
+
+        assert frame is MISCONCEPTION_FRAME
+        assert frame is not MECHANISM_FRAME
+        assert "their own words" in frame
 
     def test_every_ranked_signal_has_a_frame(self):
         """A signal `select` can rank but stage 3 cannot frame would silently

@@ -156,6 +156,81 @@ class TestParseMoments:
         )
         assert found[0].weak_evidence is False
 
+    def test_keeps_a_developer_explaining_the_mechanism_back(self):
+        """The one signal that evidences a misconception rather than a moment.
+
+        A developer restating a mechanism in their own words and getting it
+        wrong was previously unreachable: `asked_why` is gated on the quote
+        being a question, and a confident wrong statement corrects nobody, so
+        it was not `pushed_back` either.
+        """
+        found, rejected = parse_moments(
+            session("right, so the key stops the second charge from being sent"),
+            completion(
+                moments_json(
+                    moment(
+                        signal="explained_it_back",
+                        quote="right, so the key stops the second charge from being sent",
+                    )
+                )
+            ),
+        )
+        assert [m.signal for m in found] == ["explained_it_back"]
+        assert rejected == []
+
+    def test_rejects_explained_it_back_when_the_quote_is_a_question(self):
+        """The top-ranked signal needs a gate, not a paragraph.
+
+        `explained_it_back` outranks everything, so a model drifting toward
+        labelling any developer turn with it would capture every session's one
+        question. A question is the developer asking — that is `asked_why`.
+        """
+        found, rejected = parse_moments(
+            session("so does the key stop the second charge from being sent?"),
+            completion(
+                moments_json(
+                    moment(
+                        signal="explained_it_back",
+                        quote="so does the key stop the second charge from being sent?",
+                    )
+                )
+            ),
+        )
+        assert found == []
+        assert "asks rather than explains" in rejected[0]
+
+    def test_rejects_explained_it_back_when_shows_names_nothing(self):
+        # `shows` is where the wrong part gets named. Blank, the moment asserts
+        # a misconception without saying what it is.
+        found, rejected = parse_moments(
+            session("the key stops the second charge from being sent"),
+            completion(
+                moments_json(
+                    moment(
+                        signal="explained_it_back",
+                        quote="the key stops the second charge from being sent",
+                        shows="   ",
+                    )
+                )
+            ),
+        )
+        assert found == []
+        assert "names nothing wrong" in rejected[0]
+
+    def test_an_explanation_back_is_evidence_the_quote_carries(self):
+        found, _ = parse_moments(
+            session("so it retries because the server is overloaded"),
+            completion(
+                moments_json(
+                    moment(
+                        signal="explained_it_back",
+                        quote="so it retries because the server is overloaded",
+                    )
+                )
+            ),
+        )
+        assert found[0].weak_evidence is False
+
     def test_one_bad_moment_does_not_discard_the_good_ones(self):
         text = moments_json(moment(turn=0), moment(turn=1, quote="never typed this"))
         found, rejected = parse_moments(
@@ -480,3 +555,23 @@ def test_the_prompt_prefers_technical_mechanisms():
 
     assert "technical mechanism" in PROMPT
     assert "Down-rank" in PROMPT
+
+
+def test_the_prompt_disqualifies_a_moment_the_developer_went_on_to_explain():
+    """Prompt-only steering: a why-question the developer answers themselves is
+    curiosity, not a gap.
+
+    The signals say what happened; nothing said what a *later* turn does to an
+    earlier moment. A developer who states the mechanism correctly in their own
+    words has supplied the strongest evidence available that there is no gap
+    here, and it has to outweigh whatever made the moment look interesting.
+    """
+    from grask.triage import PROMPT
+
+    assert "stated the mechanism correctly in their own words" in PROMPT
+
+
+def test_the_prompt_offers_the_explained_it_back_signal():
+    from grask.triage import PROMPT
+
+    assert "explained_it_back" in PROMPT

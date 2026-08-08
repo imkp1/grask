@@ -85,6 +85,14 @@ def reprobe_one(
     A second discard is a result, not an error. It is also the useful signal
     the retry produces: a seed that cannot yield a verifiable question twice is
     more likely to be a bad seed than a bad roll.
+
+    Stage 3 is re-run without being told why the first question was discarded,
+    and that is a measured choice rather than an oversight. Feeding stage 4's
+    reason back was built and reverted: on the two discarded probes whose
+    transcripts survived, both arms recovered — the blind re-run included — so
+    the premise that a re-run needs the reason was not observed to hold. The
+    reason is still stored on the session; nothing has earned the right to put
+    it in a prompt.
     """
     topic = candidate.seed.topic
     try:

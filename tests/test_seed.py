@@ -20,7 +20,7 @@ import pytest
 
 from grask.dialogue import Dialogue, Reply
 from grask.llm import Completion, LLMError
-from grask.seed import build_prompt, parse_seed
+from grask.seed import SeedDeclined, build_prompt, parse_seed
 from grask.transcript import Turn
 from grask.triage import Moment
 
@@ -166,9 +166,73 @@ class TestPrompt:
         assert "idempotency of the retry path" in prompt
 
 
+class TestStageTwoMayDecline:
+    """Triage decides a session is worth looking at. It does not decide that a
+    misconception exists, and stage 2 is the first stage that can tell.
+
+    Before this, a stage 2 that found nothing had two exits: invent a
+    hypothesis, or fail a structural gate and be recorded as a broken pipeline.
+    Both are worse than silence, and the second poisons the error rate — the
+    number that says whether the prompt is working.
+    """
+
+    def test_a_declined_seed_raises_its_own_type(self):
+        with pytest.raises(SeedDeclined):
+            parse_seed(
+                DIALOGUE,
+                moment(),
+                completion(
+                    json.dumps({"decline": "the developer stated the mechanism correctly"})
+                ),
+            )
+
+    def test_the_decline_carries_the_reason_the_model_gave(self):
+        with pytest.raises(SeedDeclined, match="stated the mechanism correctly"):
+            parse_seed(
+                DIALOGUE,
+                moment(),
+                completion(
+                    json.dumps({"decline": "the developer stated the mechanism correctly"})
+                ),
+            )
+
+    def test_a_decline_is_distinguishable_from_a_broken_seed(self):
+        """The whole point of the type. A caller that cannot tell these apart
+        records a principled silence as a malfunction."""
+        with pytest.raises(LLMError) as caught:
+            parse_seed(DIALOGUE, moment(), completion(response(hypothesis="")))
+
+        assert not isinstance(caught.value, SeedDeclined)
+
+    def test_an_empty_decline_is_not_a_decline(self):
+        """A blank string is a mangled response, not a judgment. Reading it as
+        a decline would let a broken call silently empty the queue."""
+        with pytest.raises(LLMError) as caught:
+            parse_seed(DIALOGUE, moment(), completion(json.dumps({"decline": ""})))
+
+        assert not isinstance(caught.value, SeedDeclined)
+
+    def test_the_prompt_licenses_the_decline(self):
+        assert '"decline"' in build_prompt(DIALOGUE, moment())
+
+
 def test_the_prompt_prefers_technical_mechanisms():
     """Prompt-only steering from the 2026-07-22 design: the hypothesis names a
     mechanism, not a process reading of the moment."""
     from grask.seed import PROMPT
 
     assert "technical mechanism" in PROMPT
+
+
+def test_the_prompt_asks_for_an_evidenced_misconception_not_a_mental_state():
+    """grask observes turns and diffs, never understanding.
+
+    "What this developer does not understand" asks the model to assert a hidden
+    mental state from evidence that cannot carry it. The claim it can support is
+    narrower and is the one stage 3 actually needs: the misconception this
+    session gives reason to believe.
+    """
+    from grask.seed import PROMPT
+
+    assert "misconception" in PROMPT
+    assert "Do not infer a gap merely because" in PROMPT
