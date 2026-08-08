@@ -36,8 +36,15 @@ def isolated_grask_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path
 
 
 @pytest.fixture(autouse=True)
-def no_real_model_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+def no_real_model_calls(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
     """Refuse to shell out to the real CLI from a test.
+
+    Except from a `calibration` test, whose entire purpose is to spend money on
+    a real run. Being autouse, this fixture applied to those too and left the
+    suite with no working end-to-end test at all — `test_capture_smoke` failed
+    on the guard from the moment stage 4 introduced it. It failed quietly,
+    because calibration tests are deselected by default and the breakage is
+    only visible under `-m calibration`.
 
     Every stage is injectable and every test injects one, so nothing here should
     ever reach `llm.complete`. What makes that assumption rot is a *new* stage:
@@ -59,6 +66,9 @@ def no_real_model_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     (`check_output`, `call`, `check_call`) goes through `run`, so those two
     cover the module.
     """
+    if request.node.get_closest_marker("calibration"):
+        return
+
     real_run = subprocess.run
     real_popen = subprocess.Popen
 

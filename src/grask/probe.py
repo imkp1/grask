@@ -196,11 +196,44 @@ the thing they accepted actually works the way they think."""
 # happened in the session — something went past, or was explained and accepted —
 # and neither is true here. The developer volunteered the account themselves.
 # Same shape, accurate premise.
+#
+# It is also the only frame that names a specific distractor. Everywhere else
+# stage 3 invents wrong options from the taxonomy of wrongness in the prompt —
+# educated guesses at what a half-understanding would look like. Here the
+# session already contains one, stated by the developer and known to be wrong,
+# and the design puts the whole burden of multiple choice on the distractors:
+# the dangerous failure is a fluent answer describing a different mechanism, and
+# the distractors are the only place left to catch it. An option someone
+# actually believed is not a guess at that.
+#
+# Two constraints keep it honest. It is paraphrased into a general claim, never
+# quoted, because the design refuses to put the developer's mistake in front of
+# them — the hypothesis is internal for the same reason, and an option that
+# reads as *your words, wrong* is the accusation grask does not make. And it has
+# to be false: `verify` discards a probe with two true options, and rank 0
+# covers accounts that were incomplete as well as wrong, which are often true as
+# far as they go. Sharpening is what keeps the incomplete case usable; saying
+# "must be false" is what stops sharpening from drifting into restatement.
+#
+# Prompt-only, and deliberately: the four structural gates are all mechanically
+# decidable, and "is this option the developer's stated mechanism" is a semantic
+# judgement that could only be checked with a model call in the capture path —
+# which is a judge by another name.
 MISCONCEPTION_FRAME = """\
 Ask about the mechanism itself: what the API, tool, configuration, or algorithm
 does or requires. This developer put the mechanism into their own words and got
 part of it wrong — ask about the part they got wrong, as a question about how
-the thing behaves rather than about anything they said."""
+the thing behaves rather than about anything they said.
+
+One distractor must be their own account of the mechanism. It is in the quotes
+below, and it is the one wrong option you are not guessing at: a developer who
+half-understood this would pick it, because one of them did. State it as a
+general claim about how the thing behaves — never their words quoted back,
+never "you said", never the second person at all. If their account is
+incomplete rather than wrong, sharpen the missing implication into a false
+general claim that their account would imply if taken as the whole mechanism;
+do not wander off into a different mechanism to find something false to say.
+Like every other distractor, it must be false."""
 
 FRAMES = {
     "pushed_back": CONSEQUENCE_FRAME,

@@ -430,6 +430,17 @@ per-moment, not per-session: one bad moment in a list of six is a bad moment, no
 session. A session where every moment was demoted is recorded with `demoted_from_ask`, which
 is a bug report against the prompt rather than against the developer.
 
+**Every rejection is recorded, not only the ones that emptied a session.** `demoted_from_ask`
+answers "did this session lose *all* of its moments"; it names no gate, and it says nothing at
+all about a session that kept one moment and threw another away — which is most of them. The
+rejections were computed and dropped on that path, and the cost is a question nobody could
+ask: a signal that never reaches a verdict is either rare or gated too strictly, and those are
+a prompt bug and a gate bug respectively. So `TriageVerdict.rejections` carries them whatever
+the verdict, and `triage_run` reports surviving moments by signal — every ranked signal,
+including the ones at zero, because a signal absent from a report reads as *not measured*
+rather than *never fired* — beside a tally of rejections by reason with the `turn N:` prefix
+stripped, otherwise one gate firing on four turns reads as four unrelated one-offs.
+
 **The quote rule (stage 2, `seed.verified_quotes`).** A claimed quote that appears in nothing
 the developer typed is discarded; a seed with no surviving quote is rejected outright.
 Comparison collapses whitespace, because verification must not be so literal that a
@@ -868,6 +879,34 @@ are recall — something went past, or the agent explained and it was accepted �
 mechanism frame. So does `explained_it_back`, despite outranking both judgment signals: the
 developer has already told you what they believe the mechanism is and they were wrong about
 it, so the mechanism is the thing to ask about.
+
+**Rank 0 also chooses one of the distractors.** Everywhere else stage 3 invents its wrong
+options from the taxonomy of wrongness above — educated guesses at what a half-understanding
+would look like. `explained_it_back` is the one signal where the session already contains
+one: the developer's own account of the mechanism, stated in the transcript and known to be
+wrong. The frame requires it to be an option. This is the same lever "The answer is a pick"
+identifies as the only place left to catch a fluent answer describing a different mechanism,
+loaded with something better than a guess — a developer who half-understood this would pick
+it, because one of them did.
+
+Two constraints keep it from backfiring. It is **paraphrased into a general claim about the
+mechanism, never quoted**: the design refuses to show the developer their own mistake, which
+is why the hypothesis is internal, and an option reading as *your words, wrong* is the
+accusation grask does not make. And it must be **false**, like every other distractor —
+rank 0 covers accounts that were incomplete as well as wrong, and an incomplete account is
+often true as far as it goes, which is exactly the probe stage 4 discards for having two
+true options. An incomplete account is therefore sharpened into the false general claim it
+would imply if taken as the whole mechanism, rather than restated.
+
+It is prompt-only, and not a fifth structural gate. The four gates are all mechanically
+decidable; "is this option the developer's stated mechanism" is a semantic judgement, and
+checking it in code means a model call in the capture path, which is a judge by another
+name. Whether stage 3 obeys it is therefore a measurement, not a guarantee — and it cannot
+be measured yet, because the corpus contains no `explained_it_back` seeds at all. The signal
+shipped after every stored seed was captured. Whether rank 0 fires on real sessions is the
+prior question, and `triage_run` over the whole corpus is what answers it; if it fires and
+the distractor is still invented rather than recovered, that is the evidence for threading
+`shows` through to stage 3, which is not built.
 
 What does not vary is the invariant: exactly one correct option, grounded in the named
 artifact, portable past this repository. A frame chooses the shape of a question, never

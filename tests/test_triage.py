@@ -323,6 +323,52 @@ class TestTriageVerdictFromMoments:
         assert verdict.demoted_from_ask is True
         assert "not found" in verdict.reason
 
+    def test_a_rejected_moment_is_recorded_even_when_another_survives(self, monkeypatch):
+        """A demotion inside a kept session used to be computed and dropped.
+
+        `rejected` only reached the verdict when nothing survived, so the
+        question "is `explained_it_back` rare, or is its gate too strict?" was
+        unanswerable for every session that kept some other moment — which is
+        most of them.
+        """
+        text = moments_json(
+            moment(turn=0, quote="why an idempotency key?"),
+            moment(
+                turn=1,
+                signal="explained_it_back",
+                topic="idempotency keys",
+                quote="does the key dedupe?",
+                shows="restates the mechanism",
+            ),
+        )
+        monkeypatch.setattr("grask.triage.complete", lambda prompt, **kw: completion(text))
+
+        verdict = triage(session("why an idempotency key?", "does the key dedupe?"))
+
+        assert verdict.kept
+        assert verdict.signal == "asked_why"
+        assert any("asks rather than explains" in r for r in verdict.rejections)
+        # The session was not demoted — one moment survived. That flag stays a
+        # statement about the session, not about the rejected moment.
+        assert verdict.demoted_from_ask is False
+
+    def test_a_fully_demoted_session_reports_its_rejections_too(self, monkeypatch):
+        text = moments_json(moment(quote="never typed this"))
+        monkeypatch.setattr("grask.triage.complete", lambda prompt, **kw: completion(text))
+
+        verdict = triage(session("ship it"))
+
+        assert not verdict.kept
+        assert any("quote not found" in r for r in verdict.rejections)
+
+    def test_a_session_with_nothing_rejected_carries_no_rejections(self, monkeypatch):
+        text = moments_json(moment(turn=0, quote="why an idempotency key?"))
+        monkeypatch.setattr("grask.triage.complete", lambda prompt, **kw: completion(text))
+
+        verdict = triage(session("why an idempotency key?"))
+
+        assert verdict.rejections == []
+
     def test_an_llm_failure_is_silence_not_a_crash(self, monkeypatch):
         def boom(prompt, **kw):
             raise LLMError("claude timed out after 180s")

@@ -12,6 +12,11 @@ proves the four of them actually compose, which is a different claim from each
 of them working alone.
 
 Point it at a transcript you already know triages to `ask`, via GRASK_SMOKE_TRANSCRIPT.
+Worth doing rather than taking the default: without it this picks the newest
+transcript on disk, which is the session you are running the test from, and a
+session whose only content so far is running a test triages `silent` — a skip,
+after paying for the triage call. A historical `ask` is not a guarantee either,
+since the triage prompt moves and the call is stochastic.
 """
 
 from __future__ import annotations
@@ -65,8 +70,19 @@ def test_one_real_session_end_to_end(tmp_path: Path, monkeypatch, capsys):
         assert seed["hypothesis"].strip()
         assert json.loads(seed["quotes"]), "a stored seed with no quotes broke the evidence rule"
         assert probe["question"].strip().endswith("?")
-        assert json.loads(probe["criteria"]), "a probe with no criteria cannot be graded"
         assert probe["seed_id"] == seed["id"]
+
+        # `criteria` is not checked: it is a NOT NULL column left from the judge
+        # design, and `storage.add_probe` writes `[]` into it on every row. This
+        # test used to assert it was non-empty, which no probe has satisfied
+        # since the judge was cut — invisibly, because calibration is deselected
+        # by default. What replaced it is the answer key, so that is what a real
+        # run has to produce.
+        options = json.loads(probe["options"])
+        assert 3 <= len(options) <= 4, "the option gates let through an unusable count"
+        assert len(set(options)) == len(options), "a duplicated option is a free elimination"
+        assert probe["correct_idx"] in range(len(options)), "the key names no real option"
+        assert probe["explanation"].strip(), "the payoff is the explanation"
 
         total = sum(
             row[0] or 0

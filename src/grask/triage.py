@@ -209,6 +209,13 @@ class TriageVerdict:
     # moment has already been asked about.
     moments: list[Moment] = field(default_factory=list)
     candidates: int = 0
+    # Every moment the evidence rule threw away, whatever the session's verdict.
+    # `demoted_from_ask` says a session lost *all* of its moments; it cannot say
+    # which gate fired, and it says nothing at all about a session that kept one
+    # moment and rejected another. That gap makes "is this signal rare, or is
+    # its gate too strict?" unanswerable for most sessions — two findings with
+    # opposite fixes, one a prompt problem and the other a gate problem.
+    rejections: list[str] = field(default_factory=list)
 
     @property
     def kept(self) -> bool:
@@ -387,6 +394,9 @@ def triage(session: Session) -> TriageVerdict:
         verdict="silent",
         moments=moments,
         candidates=len(moments),
+        # Set before selection, so a rejection survives a session that kept
+        # something else. Only the fully-demoted branch used to see these.
+        rejections=rejected,
         cost_usd=completion.cost_usd,
         duration_ms=completion.duration_ms,
     )

@@ -13,10 +13,12 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+from grask.select import SIGNAL_RANK
 from grask.storage import grask_home
 from grask.survey import load_corpus
 from grask.transcript import Session
@@ -46,6 +48,7 @@ def _row(session: Session, verdict: TriageVerdict) -> dict[str, Any]:
             }
             for m in verdict.moments
         ],
+        "rejections": list(verdict.rejections),
         "cost_usd": verdict.cost_usd,
         "duration_ms": verdict.duration_ms,
         "error": verdict.error,
@@ -53,6 +56,19 @@ def _row(session: Session, verdict: TriageVerdict) -> dict[str, Any]:
         "files": len(session.files_touched),
         "branch": session.git_branch,
     }
+
+
+def _gate(rejection: str) -> str:
+    """The reason a moment was thrown away, without the turn it happened on.
+
+    Every rejection is prefixed `turn N: ` so the moment can be found again.
+    Tallying the raw strings would report the same gate firing on four turns as
+    four separate one-off reasons, which is the opposite of the finding.
+    """
+    head, sep, tail = rejection.partition(": ")
+    if sep and head.startswith("turn ") and head[5:].isdigit():
+        return tail
+    return rejection
 
 
 def _clip(text: str | None, width: int) -> str:
@@ -82,6 +98,35 @@ def report(rows: list[dict[str, Any]]) -> str:
         f"  cost           ${cost:.2f}   (${cost / max(len(rows), 1):.4f}/session)",
         f"  candidates     {sum(r['candidates'] for r in rows):>4d} moments across all sessions"
         f"   (max {max((r['candidates'] for r in rows), default=0)} in one)",
+        "",
+        "-" * 78,
+        "SIGNALS — every surviving moment, not only the one selected per session",
+        "-" * 78,
+    ]
+    # Counted over moments rather than verdicts: selection keeps one per
+    # session, so a signal can fire all week and never appear as a verdict.
+    # Every ranked signal is printed even at zero — a signal missing from the
+    # output reads as "not measured", and "measured, never fired" is a finding.
+    found = Counter(m["signal"] for r in rows for m in r["moments"])
+    for signal in sorted(SIGNAL_RANK, key=lambda s: SIGNAL_RANK[s]):
+        lines.append(f"  {signal:<24}{found.get(signal, 0):>4d}")
+
+    thrown = Counter(_gate(x) for r in rows for x in r.get("rejections", ()))
+    lines += [
+        "",
+        "-" * 78,
+        f"GATE REJECTIONS — {sum(thrown.values())} moments the evidence rule threw away",
+        "-" * 78,
+    ]
+    # A kept session can still have rejected a moment, and until these were
+    # recorded that was invisible. Rare signal and over-strict gate look
+    # identical from the counts above and need opposite fixes.
+    for reason, count in thrown.most_common():
+        lines.append(f"  {count:>4d}  {_clip(reason, 68)}")
+    if not thrown:
+        lines.append("  none")
+
+    lines += [
         "",
         "-" * 78,
         f"KEPT — {len(kept)} sessions grask would ask about",
