@@ -3,6 +3,11 @@
 How grask works and why each part is shaped that way. This is the current document: when
 the code and this disagree, one of them is a bug.
 
+Every paragraph here states something true of the system as it stands. Where a measurement is
+why a claim is weak, the number survives and the run does not — "n=3 detects nothing" is a
+property of the current confidence; how the arms were interleaved is a method, and methods
+belong in the pull request that ran them.
+
 ## Premise
 
 From the inside, understanding something and having watched it happen are
@@ -167,9 +172,8 @@ that way would measure a quality that does not transfer. The corpus runner
 `grask.reprobe` re-runs stages 3 and 4 over seeds whose question never survived, and
 `grask.triage_run` reports what stage 1 keeps across the whole corpus. All three are
 module entry points rather than `grask` subcommands, and all three spend nothing without
-`--go`: they are for whoever is developing grask, not for whoever installed it. `triage_run`
-was the exception and billed on invocation, which on a 168-session corpus is $10 nobody
-authorised.
+`--go`: they are for whoever is developing grask, not for whoever installed it. A corpus
+runner that bills on invocation is $10 nobody asked for.
 
 ### Distribution
 
@@ -319,13 +323,11 @@ bought that cheaply reads exactly like a pass that was earned, which is what mak
 than a failed probe. This is the same lever "Limitations" reaches from the other end: if
 passes turn out cheap, the fix is better distractors, not the judge's return.
 
-**It has not been shown to work.** A blind A/B — three seeds, both arms of the stage-3 prompt,
-the six questions interleaved and classified by a judge that was not told which arm produced
-which — came back 9 distractors per arm and exactly one banned shape in each. At n=3 that
-detects nothing, and the honest reading is that "a plausible wrong mechanism" was already
-carrying most of this weight. The block is kept because it costs ~10 lines and the sample
-cannot rule out a modest effect, not because the effect was observed. What would settle it is
-the yes-rate, which is the same thing every other question about probe quality is waiting on.
+**It has not been shown to work.** A blind A/B at n=3 detected no difference between this
+block and the bare "plausible wrong mechanism" it elaborates — the honest reading is that the
+shorter line was already carrying most of this weight. It is kept because ten lines cannot be
+ruled out at that sample, not because an effect was observed. The yes-rate is what would
+settle it, as it is for every other question about probe quality.
 
 Each option asserts exactly one mechanism. An option coupling two claims with "and" — a
 limit *and* a transformation, a rule *and* its consequence — is unusable even as the correct
@@ -458,15 +460,14 @@ that instruction is **unmeasured**. It failed safe in the observed case, since s
 it, and the cost was one paid call rather than a bad question.
 
 **Every rejection is recorded, not only the ones that emptied a session.** `demoted_from_ask`
-answers "did this session lose *all* of its moments"; it names no gate, and it says nothing at
-all about a session that kept one moment and threw another away — which is most of them. The
-rejections were computed and dropped on that path, and the cost is a question nobody could
-ask: a signal that never reaches a verdict is either rare or gated too strictly, and those are
-a prompt bug and a gate bug respectively. So `TriageVerdict.rejections` carries them whatever
-the verdict, and `triage_run` reports surviving moments by signal — every ranked signal,
-including the ones at zero, because a signal absent from a report reads as *not measured*
-rather than *never fired* — beside a tally of rejections by reason with the `turn N:` prefix
-stripped, otherwise one gate firing on four turns reads as four unrelated one-offs.
+answers only "did this session lose *all* of its moments". It names no gate, and says nothing
+about a session that kept one moment and threw another away — which is most of
+them — leaving a signal that never reaches a verdict indistinguishable from
+one gated too strictly, a prompt bug and a gate bug respectively. So `TriageVerdict.rejections`
+carries every rejection whatever the verdict, and `triage_run` reports surviving moments by
+signal — including the signals at zero, because one absent from a report reads as *not
+measured* rather than *never fired* — beside a tally of rejections by reason with the
+`turn N:` prefix stripped, or one gate firing on four turns reads as four unrelated one-offs.
 
 **The quote rule (stage 2, `seed.verified_quotes`).** A claimed quote that appears in nothing
 the developer typed is discarded; a seed with no surviving quote is rejected outright.
@@ -718,16 +719,13 @@ was right and the diagnosis was noise. The no-option-true message now carries ev
 reason for the same purpose — without it, "the mechanisms are all broken" and "only its
 author could answer this" are the same string.
 
-**What it costs: 3 of 15.** Re-running stage 4 over a sample of probes that had already
-*passed* it under the previous prompt discarded three. All three were local-file recall —
-"where does the data for `rf_events.jsonl` come from in the approved design", "what enforces
-the distinction after that edit in `agents/repo-finder.md`" — the shape "the question must
-teach something portable" already forbids and which nothing before this reliably caught. The
-twelve kept include probes anchored on `cmd/bd/create.go`, `ticks/reaper.py`, and
-`.github/dependabot.yml`, so the check does separate an artifact used as the setting from one
-the answer depends on. That is a ~20% yield cut on the current corpus, and it is a bug report
-against stage 3 rather than a price stage 4 charges: those probes should never have been
-written.
+**What it costs: 3 of 15.** Three probes in fifteen that had already passed stage 4 under the
+previous prompt fail the answerability check, all three local-file recall — the shape "the
+question must teach something portable" already forbids and which nothing before this reliably
+caught. The twelve kept are anchored on real files too, so the check separates an artifact
+used as the setting from one the answer depends on. A ~20% yield cut on the current corpus,
+and a bug report against stage 3 rather than a price stage 4 charges: those probes should
+never have been written.
 
 **Why a check and not more prompt.** Stage 3 writes the question, all four options, the key,
 and the explanation in one call, in sequence, and never re-reads an early option against a
@@ -792,18 +790,16 @@ worker, readable by nothing — which left "a second discard is a fact about the
 on an attempt nobody had told what went wrong with the first, and left a rising decline rate
 with no way to tell stage 2 declining correctly from stage 2 declining everything.
 
-Feeding it back into stage 3 was the obvious next step, and it was built and then reverted.
-Both arms were run on the two discarded probes whose transcripts survived — same seed, same
-dialogue, the correction the only difference — and all four questions passed stage 4, the two
-blind re-runs included. The premise did not hold: re-running the prompt recovered both. n=2
-proves nothing in either direction, which is the point — it is not evidence *for* threading a
-`correction` parameter through three modules, and unproven code costs more than unproven
-prose. The column stays: the judgment is the only record of why a session produced no
-question, and filtered to `unverified` it is how the locality rate gets measured at all. Only
-populated for discards and declines from that point on. The verdict alone does not scope that
-query: `reprobe` clears neither the verdict nor the reason when a retry succeeds, so a rate
-counted off `verdict = 'unverified'` counts the redeemed seeds too — excluding them is the
-same `LEFT JOIN probes ... WHERE p.id IS NULL` that `unprobed_seeds` uses to find them.
+Feeding it back into stage 3 is not built. On the only sample available — the two discarded
+probes whose transcripts survived — a blind re-run recovered both, so the premise that a retry
+needs telling what went wrong did not hold, and n=2 is not evidence *for* threading a
+`correction` parameter through three modules. Unproven code costs more than unproven prose.
+The column stays regardless, populated for discards and declines: the judgment is the only
+record of why a session produced no question, and filtered to `unverified` it is how the
+locality rate gets measured at all. The verdict alone does not scope that query — `reprobe`
+clears neither the verdict nor the reason when a retry succeeds, so a rate counted off
+`verdict = 'unverified'` counts the redeemed seeds too; excluding them is the same
+`LEFT JOIN probes ... WHERE p.id IS NULL` that `unprobed_seeds` uses to find them.
 
 **What it cannot check.** The judge has no repository, so it can only adjudicate claims that
 are true away from this checkout. A probe whose answer turns on the contents of a local file
@@ -930,35 +926,19 @@ decidable; "is this option the developer's stated mechanism" is a semantic judge
 checking it in code means a model call in the capture path, which is a judge by another
 name.
 
-**It has not been shown to work, and the measurement is the reason the wording above is
-kept rather than the reason it was written.** Retrospective triage over the whole corpus
-(168 sessions with human turns) found rank 0 firing on 4 of 38 kept sessions — real traffic,
-about one probe in nine. Three reached stage 3; all three passed stage 4; all three put the
-developer's own belief in the options. But a paired A/B on those same three seeds — one
-seed each, stage 3 forked twice, the frame text the only difference — recovered the
-misconception 3 of 3 with this block and 2 of 3 without it, the third a near-miss rather
-than nothing. At n=3 that detects nothing, and the honest reading is that stage 3 was
-already doing most of this from the hypothesis alone. The block is kept because it costs
-~15 lines and the sample cannot rule out a modest effect, not because the effect was
-observed. This is the same verdict, on the same evidence budget, as the distractor-shape
-block above.
+**It has not been shown to work.** Rank 0 fires on about one kept session in nine (4 of 38,
+retrospectively triaged over the corpus), and a paired A/B on three of those seeds recovered
+the misconception 3 of 3 with this block against 2 of 3 without it. At n=3 that detects
+nothing, and the honest reading is that stage 3 was already doing most of this from the
+hypothesis alone. Kept on the same terms as the distractor-shape block above.
 
-**Threading `shows` is not built, and the same run is why.** Half the surviving rank-0
-moments were *incomplete* accounts rather than wrong ones, where the misconception is not in
-the quote at all — the case the extra field looked necessary for. Stage 2 covers it anyway:
-a hypothesis has to be falsifiable, so it restates an omission as a positive false belief,
-which is the form stage 3 needs. The field would duplicate work already done.
-
-**What the run did surface is upstream of all of it.** Every gate rejection in the corpus —
-3 of 3 — was `explained_it_back` on a quote that asks rather than explains, each one
-emptying its session, so the model mislabels roughly 43% of its rank-0 proposals as
-explanations when they are questions and the session loses a probe it should have kept as
-`asked_why`. And a fourth rank-0 moment died at a stage-2 decline because turn 0 was 2,173
-characters of pasted agent prose against turns of 3-34 characters elsewhere: the quote was
-verbatim in a developer turn, so the evidence rule passed, but it was not the developer's
-account. Rank 0 is uniquely exposed to that, because the signal *is* prose explaining a
-mechanism, which is what pasted output looks like. Both are stage 1 problems and both are
-worth more than another question shape.
+**Threading `Moment.shows` through to stage 3 is the alternative, and is not built.** Half the
+surviving rank-0 accounts are *incomplete* rather than wrong, where the misconception is not
+in the quote at all — the case the extra field looks necessary for. Stage 2 covers it: a
+hypothesis has to be falsifiable, so it already restates an omission as a positive false
+belief, which is the form stage 3 needs, and the field would duplicate work done a stage
+earlier. What would justify threading it is a rank-0 distractor that comes out invented rather
+than recovered, and not before.
 
 What does not vary is the invariant: exactly one correct option, grounded in the named
 artifact, portable past this repository. A frame chooses the shape of a question, never
@@ -1102,19 +1082,14 @@ A CLI that does not recognise one would fail every capture silently, so an
 unrecognised-option failure demotes the call to the flag set that has always worked and
 remembers the demotion for the rest of the process.
 
-**None of it is a latency fix, and the measurement said so.** A first run appeared to show
-`--tools ""` taking 0.6s off the wall; at n=3 the same two times turned up swapped between the
-arms. That was API variance (±700ms call to call), not the flag. Capture's ~45s is four
-sequential model calls, three of them over a ~15k-token dialogue, and no flag here touches
-it — the only
-lever left is structural (merging stages 2 and 3 into one call), which would trade the
-quote-verification boundary between them for about ten seconds, and is not taken.
-
-Prompt-prefix caching was measured and rejected as a way to make stages 2 and 3 share the
-dialogue they both send: across two `claude -p` processes only the system prefix is reused
-(3,260 tokens), and the user message is cache-written whole every call regardless of how much
-of it two calls have in common. Ordering the stage prompts to share a prefix would buy
-nothing.
+**None of it is a latency fix.** Any wall-clock difference between these flag sets is inside
+API variance (±700ms call to call). Capture's ~45s is four sequential model calls, three of
+them over a ~15k-token dialogue, and no flag here touches that; the only lever left is
+structural — merging stages 2 and 3 into one call, which would trade the quote-verification
+boundary between them for about ten seconds, and is not taken. Prompt-prefix caching does not
+help either: across two `claude -p` processes only the system prefix is reused (3,260 tokens)
+and the user message is cache-written whole every call, so ordering the stage prompts to share
+a prefix buys nothing.
 
 ## Failure modes
 
