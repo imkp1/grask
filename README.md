@@ -22,8 +22,8 @@ you run `/grask:grask`.
 
 ## Example
 
-`/grask:grask` asks this through Claude Code's native question UI, as in the recording
-above. The same probe rendered as text, from the command the skill calls underneath:
+`/grask:grask` asks this through Claude Code's native question UI, as in the video above.
+The same probe rendered as text, from the command the skill calls underneath:
 
 ```
 $ ~/.claude/grask/grask
