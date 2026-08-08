@@ -4,8 +4,15 @@ The output that matters is not whether this executes — it is whether a develop
 reading the kept/dropped split agrees with the calls. Sessions kept that were
 actually empty are the nagging failure mode showing up before a question exists.
 
+Costs money — one call per session — so it does not spend by default: without
+`--go` it prints the session count and stops.
+
 Usage:
-    uv run python -m grask.triage_run [--limit N] [--out PATH] [--workers N]
+    uv run python -m grask.triage_run [--limit N] [--out PATH] [--workers N] [--go]
+
+`--limit` takes the *newest* sessions. That measures the deployment window
+rather than the signal, and on this corpus it is also unnecessary: the whole
+thing is 168 sessions with human turns.
 """
 
 from __future__ import annotations
@@ -45,6 +52,7 @@ def _row(session: Session, verdict: TriageVerdict) -> dict[str, Any]:
                 "topic": m.topic,
                 "quote": m.quote,
                 "weak_evidence": m.weak_evidence,
+                "relabelled_from": m.relabelled_from,
             }
             for m in verdict.moments
         ],
@@ -118,6 +126,15 @@ def report(rows: list[dict[str, Any]]) -> str:
     for signal in sorted(SIGNAL_RANK, key=lambda s: SIGNAL_RANK[s]):
         lines.append(f"  {signal:<24}{found.get(signal, 0):>4d}")
 
+    # A relabel is neither a rejection nor a clean keep, and folded into the
+    # destination signal it is invisible — along with the mislabel rate, which
+    # is what says whether the stage-1 prompt separates the two signals.
+    moved = Counter(
+        m.get("relabelled_from") for r in rows for m in r["moments"] if m.get("relabelled_from")
+    )
+    for origin, count in moved.most_common():
+        lines.append(f"    of which relabelled from {origin:<14}{count:>4d}")
+
     thrown = Counter(_gate(x) for r in rows for x in r.get("rejections", ()))
     lines += [
         "",
@@ -178,6 +195,7 @@ def main() -> None:
     # to cwd once put a 69-session corpus into this repository's git history.
     parser.add_argument("--out", type=Path, default=grask_home() / "triage-results.json")
     parser.add_argument("--root", type=Path, default=None, help="transcript root")
+    parser.add_argument("--go", action="store_true", help="actually spend; otherwise dry run")
     args = parser.parse_args()
 
     sessions = [s for s in load_corpus(args.root) if s.turns]
@@ -185,6 +203,15 @@ def main() -> None:
         sessions = sessions[: args.limit]
     if not sessions:
         print("No sessions with human turns.")
+        return
+
+    # `capture_run` and `reprobe` both refuse to spend without `--go`, and this
+    # is the most expensive of the three: one call per session over the whole
+    # corpus, $10 on the first real run. It used to bill on invocation, which is
+    # a decision nobody made.
+    if not args.go:
+        print(f"{len(sessions)} sessions with human turns.")
+        print("Dry run. Re-run with --go to spend.")
         return
 
     print(f"triaging {len(sessions)} sessions on {args.workers} workers...", file=sys.stderr)

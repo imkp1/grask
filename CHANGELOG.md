@@ -31,7 +31,22 @@ versioning follows [SemVer](https://semver.org/) once there is a 1.0 to be compa
   Run over the whole corpus it found rank 0 firing on 4 of 38 kept sessions (~1 probe in 9),
   and every rejection in 168 sessions — 3 of 3 — was `explained_it_back` on a quote that asks
   rather than explains, each emptying its session. The model mislabels roughly 43% of its
-  rank-0 proposals; the gate is right and the stage-1 prompt should separate the two signals.
+  rank-0 proposals.
+- **A question labelled `explained_it_back` is now demoted to `asked_why`, not dropped.** That
+  was the only gate firing on the corpus, and every rejection emptied its session — while a
+  question is exactly what `asked_why`'s own gate requires, so the moment was real and only
+  its label was wrong. Demoted and never promoted: rank 0 is the claim the quote failed to
+  support. An empty `shows` is still a rejection, since no weaker signal accepts it.
+  `Moment.relabelled_from` keeps the mislabel rate visible instead of folding it into rank 1.
+- **`triage_run` no longer spends on invocation.** `capture_run` and `reprobe` both dry-run
+  without `--go`; this one did not, and it is the most expensive of the three — one call per
+  session, $10 across the corpus.
+- **Stage 1 is told that pasted prose is not the developer's account.** A rank-0 moment was
+  lost to a stage-2 decline on a session with 2,173 characters of pasted agent report in turn
+  0 and 3-34 character turns elsewhere: verbatim in a developer turn, so the evidence rule
+  passed, but not something the developer believed. There is no structural fix — Claude Code
+  inlines pasted text with no marker, and a length heuristic would fire on anyone who writes
+  long prompts — so this is prompt-only and **unmeasured**.
 - **The end-to-end test runs again.** `test_capture_smoke` is the only test that proves the
   four stages compose rather than each working alone, and it had been failing since stage 4
   landed: the `no_real_model_calls` guard added with it is autouse and refused the `calibration`

@@ -13,12 +13,26 @@ problem.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from grask import triage_run
 from grask.transcript import Session, Turn
 from grask.triage import TriageVerdict
 from grask.triage_run import _row, report
+
+
+def a_session() -> Session:
+    return Session(
+        session_id="0198e4f1",
+        path=Path("/tmp/0198e4f1.jsonl"),
+        git_branch="main",
+        turns=[Turn(text="why an idempotency key?", index=0)],
+        files_touched=set(),
+    )
 
 
 def row(**overrides: Any) -> dict[str, Any]:
@@ -184,6 +198,71 @@ class TestTheRejectionTally:
         )
 
         assert out.count("the quote asks nothing") == 1
+
+
+class TestTheRelabelTally:
+    def test_relabelled_moments_are_counted_separately(self):
+        """A relabel is not a rejection and not a clean keep.
+
+        Folded into `asked_why` it is invisible, and the mislabel rate — the
+        thing that says whether the stage-1 prompt separates the two signals —
+        cannot be recovered from the counts.
+        """
+        out = report(
+            [
+                row(
+                    moments=[
+                        {
+                            "turn": 0,
+                            "signal": "asked_why",
+                            "topic": "idempotency keys",
+                            "quote": "why an idempotency key?",
+                            "weak_evidence": False,
+                            "relabelled_from": "explained_it_back",
+                        }
+                    ]
+                )
+            ]
+        )
+
+        assert "relabelled" in out
+        assert "explained_it_back" in out
+
+
+class TestTheSpendGate:
+    def test_a_dry_run_spends_nothing(self, monkeypatch, tmp_path, capsys):
+        """`capture_run` and `reprobe` both refuse to spend without `--go`.
+
+        This one did not, and it is the most expensive of the three: one call
+        per session over the whole corpus, $10 on the first real run. A runner
+        that bills on invocation is a decision nobody made.
+        """
+        monkeypatch.setattr(triage_run, "load_corpus", lambda root: [a_session()])
+        monkeypatch.setattr(
+            triage_run, "triage", lambda s: pytest.fail("dry run reached the model")
+        )
+        monkeypatch.setattr(sys, "argv", ["triage_run", "--out", str(tmp_path / "o.json")])
+
+        triage_run.main()
+
+        assert "--go" in capsys.readouterr().out
+
+    def test_go_spends(self, monkeypatch, tmp_path, capsys):
+        calls = []
+        monkeypatch.setattr(triage_run, "load_corpus", lambda root: [a_session()])
+        monkeypatch.setattr(
+            triage_run,
+            "triage",
+            lambda s: calls.append(s) or TriageVerdict(session_id=s.session_id, verdict="silent"),
+        )
+        monkeypatch.setattr(
+            sys, "argv", ["triage_run", "--go", "--out", str(tmp_path / "o.json")]
+        )
+
+        triage_run.main()
+
+        assert len(calls) == 1
+        assert (tmp_path / "o.json").exists()
 
 
 class TestTheRowCarriesRejections:

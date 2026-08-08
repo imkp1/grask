@@ -19,6 +19,7 @@ from grask.llm import (
     extract_json_object,
     salvage_flat_object,
 )
+from grask.select import select
 from grask.transcript import Session, Turn
 from grask.triage import (
     MOMENT_KEYS,
@@ -178,12 +179,15 @@ class TestParseMoments:
         assert [m.signal for m in found] == ["explained_it_back"]
         assert rejected == []
 
-    def test_rejects_explained_it_back_when_the_quote_is_a_question(self):
+    def test_demotes_explained_it_back_when_the_quote_is_a_question(self):
         """The top-ranked signal needs a gate, not a paragraph.
 
         `explained_it_back` outranks everything, so a model drifting toward
         labelling any developer turn with it would capture every session's one
-        question. A question is the developer asking — that is `asked_why`.
+        question. A question is the developer asking — that is `asked_why`, and
+        that is where the moment goes rather than into the bin. See
+        `TestAQuestionMislabelledAsAnExplanation` for why demotion beats
+        dropping, and for what the corpus said it was costing.
         """
         found, rejected = parse_moments(
             session("so does the key stop the second charge from being sent?"),
@@ -196,8 +200,8 @@ class TestParseMoments:
                 )
             ),
         )
-        assert found == []
-        assert "asks rather than explains" in rejected[0]
+        assert rejected == []
+        assert [m.signal for m in found] == ["asked_why"]
 
     def test_rejects_explained_it_back_when_shows_names_nothing(self):
         # `shows` is where the wrong part gets named. Blank, the moment asserts
@@ -292,6 +296,93 @@ class TestParseMoments:
         assert "no turn None" not in rejected[0]
 
 
+class TestAQuestionMislabelledAsAnExplanation:
+    """The only gate that fires on the real corpus, and it was costing sessions.
+
+    Over 168 sessions every rejection was `explained_it_back` on a quote that
+    asks rather than explains — 3 of 7 rank-0 proposals — and each one emptied
+    its session. But a question is exactly what `asked_why` requires, so the
+    moment was real and only its signal was wrong. Dropping it threw away a
+    probe that rank 1 would have kept.
+    """
+
+    def test_the_moment_is_relabelled_rather_than_dropped(self):
+        found, rejected = parse_moments(
+            session("why does the key have to be stable across retries?"),
+            completion(
+                moments_json(
+                    moment(
+                        signal="explained_it_back",
+                        quote="why does the key have to be stable across retries?",
+                        shows="they take the key's stability as given",
+                    )
+                )
+            ),
+        )
+
+        assert rejected == []
+        assert [m.signal for m in found] == ["asked_why"]
+        assert found[0].relabelled_from == "explained_it_back"
+
+    def test_the_relabelled_moment_ranks_as_asked_why(self):
+        """Demoted, never promoted. Rank 0 is the claim the quote failed to
+        support, so the moment must not keep rank 0's precedence."""
+        found, _ = parse_moments(
+            session("no, use a ledger", "why an idempotency key?"),
+            completion(
+                moments_json(
+                    moment(turn=0, signal="pushed_back", quote="no, use a ledger", topic="ledgers"),
+                    moment(
+                        turn=1,
+                        signal="explained_it_back",
+                        quote="why an idempotency key?",
+                        shows="they treat the key as the thing that dedupes",
+                    ),
+                )
+            ),
+        )
+
+        assert select(found).signal == "asked_why"
+
+    def test_an_explanation_with_nothing_named_wrong_is_still_rejected(self):
+        """Only the question case is recoverable. An empty `shows` leaves no
+        claim about what was misunderstood, and there is no other signal it
+        satisfies."""
+        found, rejected = parse_moments(
+            session("the key stops duplicates because redis remembers it"),
+            completion(
+                moments_json(
+                    moment(
+                        signal="explained_it_back",
+                        quote="the key stops duplicates because redis remembers it",
+                        shows="",
+                    )
+                )
+            ),
+        )
+
+        assert found == []
+        assert "shows names nothing wrong" in rejected[0]
+
+    def test_an_ordinary_explanation_is_untouched(self):
+        found, rejected = parse_moments(
+            session("the key stops duplicates because redis remembers it"),
+            completion(
+                moments_json(
+                    moment(
+                        signal="explained_it_back",
+                        quote="the key stops duplicates because redis remembers it",
+                        shows="they think the store's memory is what dedupes",
+                    )
+                )
+            ),
+        )
+
+        assert rejected == []
+        assert found[0].signal == "explained_it_back"
+        assert found[0].relabelled_from == ""
+
+
 class TestTriageVerdictFromMoments:
     def test_selected_moment_populates_the_verdict(self, monkeypatch):
         text = moments_json(
@@ -337,7 +428,7 @@ class TestTriageVerdictFromMoments:
                 turn=1,
                 signal="explained_it_back",
                 topic="idempotency keys",
-                quote="does the key dedupe?",
+                quote="the developer never typed this sentence",
                 shows="restates the mechanism",
             ),
         )
@@ -347,7 +438,7 @@ class TestTriageVerdictFromMoments:
 
         assert verdict.kept
         assert verdict.signal == "asked_why"
-        assert any("asks rather than explains" in r for r in verdict.rejections)
+        assert any("quote not found" in r for r in verdict.rejections)
         # The session was not demoted — one moment survived. That flag stays a
         # statement about the session, not about the rejected moment.
         assert verdict.demoted_from_ask is False

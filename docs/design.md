@@ -164,9 +164,12 @@ There is no `grask <topic>` entry point: a hand-typed topic is the one path wher
 failure — misreading code the developer actually wrote — cannot occur, so a probe validated
 that way would measure a quality that does not transfer. The corpus runner
 (`grask.capture_run`) exercises the same core against real transcripts instead, and
-`grask.reprobe` re-runs stages 3 and 4 over seeds whose question never survived. Both are
-module entry points rather than `grask` subcommands, and both spend nothing without `--go`:
-they are for whoever is developing grask, not for whoever installed it.
+`grask.reprobe` re-runs stages 3 and 4 over seeds whose question never survived, and
+`grask.triage_run` reports what stage 1 keeps across the whole corpus. All three are
+module entry points rather than `grask` subcommands, and all three spend nothing without
+`--go`: they are for whoever is developing grask, not for whoever installed it. `triage_run`
+was the exception and billed on invocation, which on a 168-session corpus is $10 nobody
+authorised.
 
 ### Distribution
 
@@ -429,6 +432,30 @@ as the moment's identity. An `asked_why` whose quote asks nothing is rejected. R
 per-moment, not per-session: one bad moment in a list of six is a bad moment, not a failed
 session. A session where every moment was demoted is recorded with `demoted_from_ask`, which
 is a bug report against the prompt rather than against the developer.
+
+**A question labelled `explained_it_back` is demoted to `asked_why`, not dropped.** This was
+the only gate firing on the corpus — 3 of 7 rank-0 proposals across 168 sessions — and each
+rejection emptied its session, because those sessions had no other moment. Dropping was
+throwing away a moment rank 1 would have kept: a question is exactly what `asked_why`'s own
+gate requires, so the evidence is present and only the label was wrong. Demotion is safe in
+the direction that matters — rank 0 is the claim the quote failed to support, so the moment
+must never keep rank 0's precedence, and the worst case is a question about the topic the
+developer asked about, which is what rank 1 does anyway. The two other rank-0 rejections stay
+rejections: an empty `shows` leaves no claim about what was misunderstood, and there is no
+weaker signal it satisfies. `Moment.relabelled_from` records the move, because folded silently
+into `asked_why` the mislabel rate — the number that says whether stage 1 separates the two
+signals — is unrecoverable.
+
+**Pasted prose is not the developer's account, and only the prompt can say so.** A rank-0
+moment was lost to a stage-2 decline whose session had 2,173 characters of pasted agent report
+in turn 0 and turns of 3–34 characters everywhere else. The quote was verbatim in a developer
+turn, so the evidence rule passed; it was not something the developer believed. Rank 0 is the
+signal most exposed to this, because prose explaining a mechanism is what the signal looks
+like. There is no structural fix: Claude Code inlines pasted text as an ordinary string —
+exactly one transcript in the corpus carries a `Pasted text` marker — and a length heuristic
+would fire on developers who write long prompts. So stage 1 is told what the tell is, and
+that instruction is **unmeasured**. It failed safe in the observed case, since stage 2 caught
+it, and the cost was one paid call rather than a bad question.
 
 **Every rejection is recorded, not only the ones that emptied a session.** `demoted_from_ask`
 answers "did this session lose *all* of its moments"; it names no gate, and it says nothing at
