@@ -24,15 +24,22 @@ MAX_TURN_CHARS = 3000
 MAX_PROMPT_CHARS = 24_000
 MAX_FILES_LISTED = 40
 
-# The four qualifying signals from the design's "What counts as a topic", split
-# by whether a quote can actually prove them.
+# The qualifying signals from the design's "What counts as a topic", split by
+# whether a quote can actually prove them.
 #
-# For the first two the developer's own words *are* the evidence: a why-question
-# or a correction is visible in the quote itself. For the second two the quote
-# can only ever be circumstantial — a pattern landing in the codebase is shown by
-# the code, not by anything the developer typed — so a keep on those grounds is
-# recorded as weak and left for stage 2 to ground in the diff.
-QUOTE_PROVABLE = frozenset({"asked_why", "pushed_back"})
+# For the first three the developer's own words *are* the evidence: a
+# why-question, a correction, or a mechanism restated wrongly is visible in the
+# quote itself. For the last two the quote can only ever be circumstantial — a
+# pattern landing in the codebase is shown by the code, not by anything the
+# developer typed — so a keep on those grounds is recorded as weak and left for
+# stage 2 to ground in the diff.
+#
+# `explained_it_back` was the gap in the original four. A developer stating a
+# mechanism in their own words and getting it wrong is the only signal here that
+# evidences a *misconception* rather than a moment — and it was unreachable:
+# `asked_why` is gated below on the quote being a question, and a confident
+# wrong statement corrects nobody, so it was not `pushed_back` either.
+QUOTE_PROVABLE = frozenset({"asked_why", "pushed_back", "explained_it_back"})
 CODE_GROUNDED = frozenset({"new_pattern", "explained_at_length"})
 VALID_SIGNALS = QUOTE_PROVABLE | CODE_GROUNDED
 
@@ -56,11 +63,15 @@ times is how this tool gets disabled in week two. Do not pad the list.
 
 ## What qualifies
 
-Something the developer ENGAGED with. Each moment is exactly one of these four
+Something the developer ENGAGED with. Each moment is exactly one of these five
 signals, named as `signal`:
 
+- `explained_it_back` — they put the mechanism into their own words and got it
+  wrong, or left out the part that makes it work. The strongest signal, and the
+  only one that shows a gap rather than an opportunity for one: what they said
+  does not match how the thing behaves.
 - `asked_why` — they asked why about something. Their curiosity, not the agent's
-  output. The strongest signal.
+  output. Curiosity is not itself a gap — see below.
 - `pushed_back` — they corrected, overrode, or disagreed with the agent. Judgment
   showing.
 - `new_pattern` — a pattern, library, or technique was newly introduced into
@@ -70,6 +81,27 @@ signals, named as `signal`:
 
 For the last two the test is: did something land in this developer's codebase
 whose *rationale* they may have accepted on faith?
+
+## Demonstrated understanding disqualifies a moment
+
+The signals say what happened. A later turn can take it back: if the developer
+stated the mechanism correctly in their own words at any point after the moment,
+drop the moment entirely. An explanation they got right is the strongest
+evidence available that there is no gap here, and it outweighs whatever made the
+moment look interesting.
+
+A developer who asks "why do we need jitter here?" and later says "right, so the
+clients don't all retry at the same instant" has shown you they understand it.
+That is curiosity satisfied, not a gap — and asking them about it spends the
+session's one question on the thing you have the most evidence they know.
+
+This applies hardest to `new_pattern` and `explained_at_length`, where nothing
+the developer typed was evidence of a gap in the first place. It applies to
+`explained_it_back` just as hard, and that is the case worth being careful
+about: a developer who restates a mechanism wrongly, gets corrected, and then
+says it back correctly has closed the gap inside the session. Drop that moment.
+The wrong restatement is only a gap if nothing later in the session shows they
+now have it right.
 
 ## What to prefer
 
@@ -108,7 +140,10 @@ writing `shows` about something the quote does not contain, you have picked the
 wrong quote or the wrong signal.
 
 For `asked_why` the quote must be the developer asking. For `pushed_back` it must
-be the developer correcting or overriding.
+be the developer correcting or overriding. For `explained_it_back` it must be the
+developer's own account of how the mechanism works, and `shows` must name the
+part they got wrong or left out — "they restated it" is not enough, because a
+correct restatement disqualifies the moment rather than earning one.
 
 ## Output
 
@@ -117,7 +152,8 @@ appears inside a string value. For no qualifying moments, reply `[]`.
 
 [
   {{"turn": <the number in brackets, as an integer>,
-    "signal": "asked_why" | "pushed_back" | "new_pattern" | "explained_at_length",
+    "signal": "explained_it_back" | "asked_why" | "pushed_back" | "new_pattern"
+              | "explained_at_length",
     "topic": "short noun phrase naming the concept",
     "quote": "verbatim developer words from that turn",
     "shows": "one sentence on what this quote demonstrates"}}
@@ -268,6 +304,23 @@ def parse_moments(session: Session, completion: Completion) -> tuple[list[Moment
         if signal == "asked_why" and not Turn(text=quote, index=0).is_question:
             rejected.append(f"{label}: signal is asked_why but the quote asks nothing")
             continue
+        if signal == "explained_it_back":
+            # The highest-ranked signal, and the only quote-provable one that
+            # had nothing but the prompt behind it. Same reasoning as the check
+            # above: a developer asking how something works is `asked_why`, not
+            # an account of the mechanism, and `shows` is where the wrong part
+            # gets named — blank, the moment claims a misconception without
+            # saying what it is, and `select` would still hand it the session.
+            if Turn(text=quote, index=0).is_question:
+                rejected.append(
+                    f"{label}: signal is explained_it_back but the quote asks rather than explains"
+                )
+                continue
+            if not shows:
+                rejected.append(
+                    f"{label}: signal is explained_it_back but shows names nothing wrong"
+                )
+                continue
 
         found.append(
             Moment(

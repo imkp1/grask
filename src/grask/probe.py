@@ -143,7 +143,7 @@ class Probe:
 
 
 # How to frame the question, keyed by the signal that earned the session its
-# probe. Stage 1 already knows which of four things the developer did; until
+# probe. Stage 1 already knows which of five things the developer did; until
 # this existed, stage 3 threw that away and asked every moment the same way.
 #
 # The mismatch that motivated the split: `pushed_back` and `asked_why` are the
@@ -186,9 +186,26 @@ does or requires. A pattern went past this developer, or the agent explained
 something at length and they accepted it — what is worth checking is whether
 the thing they accepted actually works the way they think."""
 
+# `explained_it_back` takes a mechanism-shaped frame despite being the strongest
+# signal. The consequence frame exists for moments where judgment was what
+# happened and reciting the decision would be the boring question; here the
+# developer already told you what they believe the mechanism is, and they were
+# wrong about it. The mechanism is the thing to ask about.
+#
+# Its own text rather than `MECHANISM_FRAME` because that one asserts what
+# happened in the session — something went past, or was explained and accepted —
+# and neither is true here. The developer volunteered the account themselves.
+# Same shape, accurate premise.
+MISCONCEPTION_FRAME = """\
+Ask about the mechanism itself: what the API, tool, configuration, or algorithm
+does or requires. This developer put the mechanism into their own words and got
+part of it wrong — ask about the part they got wrong, as a question about how
+the thing behaves rather than about anything they said."""
+
 FRAMES = {
     "pushed_back": CONSEQUENCE_FRAME,
     "asked_why": CONSEQUENCE_FRAME,
+    "explained_it_back": MISCONCEPTION_FRAME,
     "new_pattern": MECHANISM_FRAME,
     "explained_at_length": MECHANISM_FRAME,
 }
@@ -206,7 +223,8 @@ def frame_for(signal: str) -> str:
 PROMPT = """\
 You are stage 3 of `grask`. Everything has already been decided except the
 question itself: the session was triaged, the moment selected, and a hypothesis
-formed about what this developer accepted without fully understanding.
+formed — from what the session shows, not from any claim about what the
+developer knows — about a mechanism that may be misunderstood here.
 
 Produce ONE multiple-choice question that tests the mechanism at the core of
 that hypothesis.
@@ -259,6 +277,21 @@ something a developer who half-understood the decision would believe. The
 dangerous failure is a fluent answer describing a different mechanism, and the
 distractors are where you catch it. No "all of the above" or "none of the
 above". No option may be a joke or an obvious throwaway.
+
+Build each distractor on one of these, whichever the mechanism affords:
+
+- a common misconception about the named technology
+- a nearby mechanism — real, and not the one at work here
+- cause and consequence swapped
+- the right mechanism at the wrong time, layer, or scope
+- two similar APIs or semantics confused for one another
+- an invariant assumed to hold that nothing actually guarantees
+
+Do not write a distractor that is absurd, that is technically unrelated to what
+the question asks, or that is merely a shorter version of the correct option
+with a qualifier removed. A developer eliminates all three of those without
+knowing the mechanism, and a pass bought that cheaply reads exactly like a pass
+that was earned.
 
 Each option asserts ONE mechanism. An option that couples two claims with
 "and" — a limit AND a transformation, a rule AND its consequence — is

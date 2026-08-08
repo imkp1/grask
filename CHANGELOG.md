@@ -6,6 +6,57 @@ SQLite schema under `GRASK_HOME` carries no migration guarantee yet.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/) once there is a 1.0 to be compatible with.
 
+## Unreleased
+
+- **Why a probe was discarded is stored, not only logged.** `sessions.discard_reason` holds stage
+  4's judgment, which previously reached `grask.log` and stopped — rotated at 1 MB, written by a
+  detached worker, readable by nothing. It is what makes the locality rate queryable at all.
+  Feeding it back into stage 3 as a correction was built and reverted in the same branch: on both
+  discarded probes whose transcripts survived, all four re-asked questions passed stage 4, the two
+  *blind* re-runs included. The premise was not observed to hold, and an unproven keyword argument
+  threaded through three modules costs more than unproven prompt text. `reprobe` re-runs clean.
+
+- **A fifth triage signal, `explained_it_back`, and it outranks every other one.** A developer
+  who puts the mechanism into their own words and gets it wrong is the only evidence grask can
+  see of a misconception rather than of an *opportunity* for one — and it had nowhere to land:
+  `asked_why` is gated on the quote being a question, and a confident wrong statement corrects
+  nobody, so it was not `pushed_back` either. Everything below rank 0 is a reason to suspect a
+  gap; rank 0 is a gap.
+- **Demonstrated understanding now disqualifies a moment.** If the developer states the mechanism
+  correctly in their own words after the moment, triage drops it. Asking why is curiosity, and
+  curiosity is compatible with having understood the answer — a developer who asks about jitter
+  and then says "right, so the clients don't all retry at the same instant" has given the
+  strongest evidence available that there is no gap, and spending the session's one question
+  there spends it on the topic with the most evidence they already know it.
+- **Stage 2 states a claim about evidence, not about a mind.** "What the developer does not
+  understand" asks the model to assert a hidden mental state from evidence that cannot carry one,
+  which it will do fluently on any session at all. It now names the most plausible mechanism
+  misconception the session's evidence *supports*, and the prompt names what is not evidence for
+  one: the agent introduced the mechanism, the developer asked a question, the developer accepted
+  a suggestion, the pattern looks unfamiliar.
+- **Stage 2 may decline, and a decline is not an error.** Triage decides a session is worth
+  looking at; it never decides a misconception is there, and stage 2 is the first stage that can
+  tell. It can now answer `{"decline": "..."}` and the session records the new terminal verdict
+  `declined`. Previously a stage 2 that found nothing had two exits — invent a hypothesis, or trip
+  a structural gate and be filed as a broken pipeline. `declined` is neither `error` (nothing
+  malfunctioned, and that rate is what says whether the prompt works) nor `silent` (triage kept
+  this session, and the decline rate is the only way to see it collapsing yield rather than
+  trimming it). It is invisible to `/grask`, which has nothing to explain when no question was
+  ever written.
+- **The stage-3 prompt says what wrongness is made of.** "A plausible wrong mechanism" states what
+  a distractor must be and gives no help writing one, and the distractors are where the design's
+  accepted cost — recognition being easier than recall — was supposed to be carried. The prompt
+  now names the kinds to build from (common misconception, nearby-but-wrong mechanism, cause and
+  consequence swapped, right mechanism at the wrong scope, two similar APIs confused, an assumed
+  invariant nothing guarantees) and the three that hand back a free pass (absurd, unrelated, or
+  the correct option with a qualifier removed).
+- **Answerability is stage 4's first question.** A stem may name a local file as its setting, but
+  if choosing between the options needs the contents of a local file the question does not quote,
+  the judge marks every option false. Both wrong discards in the 47-probe backtest were that
+  shape — right verdict, reason unrelated to what was wrong with the probe. The
+  no-option-true rejection now carries every option's reason, because without it "the mechanisms
+  are all broken" and "only its author could answer this" are the same string in the log.
+
 ## 0.1.0-rc7
 
 - **One worker per session, enforced where it can be.** `has_session` and `begin_session` are two

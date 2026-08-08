@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     cost_usd        REAL,
     duration_ms     INTEGER,
     discarded_usd   REAL,
+    discard_reason  TEXT,
     triaged_at      TEXT NOT NULL
 );
 
@@ -103,7 +104,11 @@ CREATE TABLE IF NOT EXISTS answers (
 # Columns added to tables that had already shipped, per table. `_migrate` walks
 # this; `SCHEMA` above carries the same columns for databases created fresh.
 ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
-    "sessions": (("duration_ms", "INTEGER"), ("discarded_usd", "REAL")),
+    "sessions": (
+        ("duration_ms", "INTEGER"),
+        ("discarded_usd", "REAL"),
+        ("discard_reason", "TEXT"),
+    ),
     "seeds": (("duration_ms", "INTEGER"),),
     "probes": (
         ("options", "TEXT"),
@@ -163,6 +168,23 @@ BUSY_TIMEOUT_SECONDS = 30.0
 # stops being worth mentioning the moment a *later* session mints a probe: see
 # `empty_reason`, where the age limit alone was not enough.
 UNVERIFIED = "unverified"
+
+# The verdict a session carries when triage kept it and stage 2 disagreed —
+# nothing here supports a specific misconception, so no question was written.
+# Terminal, like `silent` and `unverified`.
+#
+# Deliberately neither of the two it sits between. Not `error`: nothing
+# malfunctioned, and the error rate is the number that says whether the prompt
+# is working, so a working decline inside it is a lie about the pipeline. Not
+# `silent`: triage did keep this session, and the count of sessions stage 2
+# talked triage out of is the only way to see the decline collapsing yield
+# rather than trimming it.
+#
+# Unlike `unverified` it is invisible to `empty_reason`, and that is the whole
+# difference. `unverified` tells the developer a question existed and was thrown
+# away; a decline means no question was ever written, which from the queue's
+# side is exactly what silence looks like. There is nothing to explain.
+DECLINED = "declined"
 
 
 def _pending_from_row(row: sqlite3.Row) -> PendingProbe:
@@ -441,6 +463,7 @@ class Store:
         cost_usd: float | None = None,
         duration_ms: int | None = None,
         discarded_usd: float | None = None,
+        discard_reason: str | None = None,
     ) -> None:
         """Record one triaged session's outcome.
 
@@ -468,24 +491,43 @@ class Store:
         mean subtracting a per-session triage cost that no longer exists
         anywhere. It is a column because one specific question needs it exact,
         not because the two numbers are conceptually different kinds of money.
+
+        `discard_reason` is why a session that had something to ask about
+        produced no question: what stage 4 said when it threw the question away,
+        or what stage 2 said it could not find when it declined to write a seed.
+        Both used to reach only `grask.log`, which is not a channel anything can
+        read: rotated at 1 MB and written by a detached worker. Nothing consumes
+        it in code — feeding it back into stage 3 was tried and reverted, for
+        want of any evidence that a re-run needs it. It is a column because the
+        judgment is the only record of *why* a session produced no question:
+        filtered to `unverified` it is how the locality rate gets measured at
+        all, and filtered to `declined` it is the only way to tell stage 2
+        declining correctly from stage 2 declining everything.
+
+        The verdict alone does not scope either query. A discard that `reprobe`
+        later redeemed keeps both its `unverified` verdict and its reason —
+        nothing clears them — so a rate counted off the verdict counts the
+        recoveries too. Excluding them is the `LEFT JOIN probes p ... WHERE p.id
+        IS NULL` that `unprobed_seeds` already spells out.
         """
         self.conn.execute(
             "INSERT INTO sessions"
             " (session_id, transcript_path, cwd, git_branch, verdict, signal, topic,"
-            "  cost_usd, duration_ms, discarded_usd, triaged_at)"
+            "  cost_usd, duration_ms, discarded_usd, discard_reason, triaged_at)"
             " VALUES (:id, :path, :cwd, :branch, :verdict, :signal, :topic,"
-            "         :cost, :duration, :discarded, :now)"
+            "         :cost, :duration, :discarded, :reason, :now)"
             " ON CONFLICT(session_id) DO UPDATE SET"
             "  transcript_path = :path, cwd = :cwd, git_branch = :branch,"
             "  verdict = :verdict, signal = :signal, topic = :topic,"
             "  cost_usd = :cost, duration_ms = :duration,"
-            "  discarded_usd = :discarded, triaged_at = :now"
+            "  discarded_usd = :discarded, discard_reason = :reason, triaged_at = :now"
             " WHERE sessions.verdict = :capturing",
             {
                 "id": session_id,
                 "path": transcript_path,
                 "cwd": cwd,
                 "branch": git_branch,
+                "reason": discard_reason,
                 "verdict": verdict,
                 "signal": signal,
                 "topic": topic,

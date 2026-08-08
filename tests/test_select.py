@@ -26,7 +26,20 @@ class TestSelect:
         only = FakeMoment("pushed_back", 3)
         assert select([only]) is only
 
-    def test_prefers_asked_why_over_every_other_signal(self):
+    def test_prefers_explained_it_back_over_every_other_signal(self):
+        # A developer who put the mechanism in their own words and got it wrong
+        # is the only signal that evidences a misconception directly. Every
+        # other one evidences that a moment happened.
+        moments = [
+            FakeMoment("explained_at_length", 9),
+            FakeMoment("pushed_back", 8),
+            FakeMoment("new_pattern", 7),
+            FakeMoment("asked_why", 1),
+            FakeMoment("explained_it_back", 4),
+        ]
+        assert select(moments).signal == "explained_it_back"
+
+    def test_prefers_asked_why_over_the_signals_below_it(self):
         moments = [
             FakeMoment("explained_at_length", 9),
             FakeMoment("pushed_back", 8),
@@ -34,6 +47,13 @@ class TestSelect:
             FakeMoment("asked_why", 1),
         ]
         assert select(moments).signal == "asked_why"
+
+    def test_a_wrong_explanation_outranks_the_question_that_preceded_it(self):
+        # The pair the two changes make: asking why is curiosity, and answering
+        # it wrongly is the gap. When a session has both, the second is what
+        # earns the question.
+        moments = [FakeMoment("asked_why", 2), FakeMoment("explained_it_back", 3)]
+        assert select(moments).signal == "explained_it_back"
 
     def test_prefers_quote_provable_signals_over_code_grounded_ones(self):
         # The divergence from the design doc's stated order, pinned: a signal a

@@ -129,6 +129,20 @@ class TestPrompt:
         marked = prompt.split(PROBE.options[PROBE.correct_idx])[1].splitlines()[0]
         assert marked.strip() == ""
 
+    def test_makes_answerability_the_judges_job(self):
+        """Locality was caught by accident, when it was caught at all.
+
+        Both wrong discards in the 47-probe backtest were questions that turned
+        on a local file: the judge took the stem's premises as given, reasoned
+        on top of them, and preferred a false option. The discard was right and
+        the reason was noise. Asking the question directly is what makes the
+        rejection say what it found.
+        """
+        prompt = build_prompt(PROBE)
+
+        assert "answerable" in prompt
+        assert "mark every one of them false" in prompt
+
     def test_tells_the_judge_it_has_no_files(self):
         # Two of 47 backtested probes came back as an attempted tool call rather
         # than JSON: the judge went looking for the repo. Saying it is not there
@@ -148,6 +162,21 @@ class TestVerify:
     def test_no_true_option_is_unverified(self):
         with pytest.raises(ProbeUnverified, match="no option"):
             verify(PROBE, complete=replies(judgment(False, False, False, False)))
+
+    def test_no_true_option_reports_why_the_judge_rejected_them(self):
+        """The unanswerable-question path lands here, and it used to land
+        silently.
+
+        "No option was judged true" is the same message whether every option
+        asserted a broken mechanism or the question could only be answered by
+        someone holding the local file. The reasons are the only thing that
+        separates them, and the log is where that distinction has to survive.
+        """
+        text = judgment(
+            False, False, False, False, reason="answering this needs the local spec"
+        )
+        with pytest.raises(ProbeUnverified, match="needs the local spec"):
+            verify(PROBE, complete=replies(text))
 
     def test_one_true_option_that_is_not_the_key_is_unverified(self):
         # Never repointed. See the module docstring.

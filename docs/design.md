@@ -137,7 +137,7 @@ One SQLite file at `~/.claude/grask/grask.db` (`GRASK_HOME` relocates it). Five 
 
 | Table | Holds |
 |---|---|
-| `sessions` | one row per session seen, whatever the outcome — `ask` \| `silent` \| `unverified` \| `error` |
+| `sessions` | one row per session seen, whatever the outcome — `ask` \| `silent` \| `declined` \| `unverified` \| `error` |
 | `seeds` | stage 2's topic, verified quotes, refs, decision, hypothesis |
 | `probes` | the question, shuffled options, `correct_idx`, explanation |
 | `asks` | one row per probe answered, `UNIQUE(probe_id)` |
@@ -303,6 +303,26 @@ actually believe. The dangerous failure is a fluent answer describing a differen
 and the distractors are the only place left to catch it. An option that is a joke or an
 obvious throwaway converts the probe into a free pass, which is why the stage-3 prompt bans
 them and the option gates reject duplicates.
+
+**"A plausible wrong mechanism" says what a distractor must be, never what wrongness is made
+of**, and that gap is where the burden this design accepted was quietly not being carried. So
+the prompt names the kinds: a common misconception about the named technology, a nearby
+mechanism that is real but not the one at work, cause and consequence swapped, the right
+mechanism at the wrong time or layer or scope, two similar APIs confused for one another, an
+invariant assumed to hold that nothing guarantees. And it names the three that hand back the
+free pass — absurd, technically unrelated to what the question asks, or the correct option
+with a qualifier removed. All three are eliminable without knowing the mechanism, and a pass
+bought that cheaply reads exactly like a pass that was earned, which is what makes it worse
+than a failed probe. This is the same lever "Limitations" reaches from the other end: if
+passes turn out cheap, the fix is better distractors, not the judge's return.
+
+**It has not been shown to work.** A blind A/B — three seeds, both arms of the stage-3 prompt,
+the six questions interleaved and classified by a judge that was not told which arm produced
+which — came back 9 distractors per arm and exactly one banned shape in each. At n=3 that
+detects nothing, and the honest reading is that "a plausible wrong mechanism" was already
+carrying most of this weight. The block is kept because it costs ~10 lines and the sample
+cannot rule out a modest effect, not because the effect was observed. What would settle it is
+the yes-rate, which is the same thing every other question about probe quality is waiting on.
 
 Each option asserts exactly one mechanism. An option coupling two claims with "and" — a
 limit *and* a transformation, a rule *and* its consequence — is unusable even as the correct
@@ -604,9 +624,31 @@ every time — 26 of 29 keep their signal, and topic wording is stable — but a
 2–9 qualifying moments and a single call picks among them arbitrarily. That arbitrary pick
 was the whole of the observed topic instability.
 
-**Stage 2 — seed (`seed.py`, one call).** State, as a falsifiable claim, what the developer
-may have accepted without understanding, plus the topic, the verified quotes, the `file:line`
-refs, and the decision that shipped. Stored and re-runnable; see "Limitations".
+**Stage 2 — seed (`seed.py`, one call).** Name, as a falsifiable claim, the most plausible
+mechanism misconception the session's evidence supports, plus the topic, the verified quotes,
+the `file:line` refs, and the decision that shipped. Stored and re-runnable; see
+"Limitations".
+
+**The hypothesis is a claim about evidence, not about a mind.** grask observes turns, agent
+replies, and diffs. It never observes understanding, and "state what the developer does not
+understand" asks the model to assert a hidden mental state from evidence that cannot carry
+one — which it will do, fluently, on any session at all. The claim the evidence *can* support
+is narrower and is the one stage 3 actually needs: the belief this session gives reason to
+think is mistaken. The prompt names what is not evidence for that (the agent introduced the
+mechanism, the developer asked a question, the developer accepted a suggestion, the pattern
+looks unfamiliar) because each is evidence only that something happened.
+
+**Stage 2 may decline, and a decline is not an error.** Triage decides a session is worth
+*looking at*. It does not decide a misconception is there, and stage 2 is the first stage
+that can tell — it is the first to see the agent's side of the conversation and the diff. So
+it can answer `{"decline": "..."}` and the session records `declined`. Without that exit a
+stage 2 that found nothing had two: invent a hypothesis, which produces a question that
+teaches the developer the tool is guessing, or trip a structural gate and be recorded as a
+broken pipeline. `declined` is deliberately neither `error` (nothing malfunctioned, and the
+error rate is what says whether the prompt works) nor `silent` (triage kept this session, and
+the count of sessions stage 2 talked it out of is the only way to see the decline collapsing
+yield rather than trimming it). Unlike `unverified` it is invisible to `empty_reason`: no
+question was ever written, so from the queue's side there is nothing to explain.
 
 **Stage 3 — probe (`probe.py`, one call).** Write one multiple-choice question about the
 mechanism, with the answer key and the explanation. Reads the full dialogue — turns, agent
@@ -624,6 +666,30 @@ the stored key. Anything else — two true, none true, one true that is not the 
 the question and records the session `unverified` — a state `/grask` reports only while no
 later session has minted a probe, because "the last question was thrown away" stops being
 true the moment a newer one is not.
+
+**Answerability is the judge's first question.** Before judging options it decides whether
+the *question* can be answered from general technical knowledge plus the premises the stem
+itself states. A stem may name a local file, flag, or identifier as its setting — that is the
+anchor every good probe has — but if choosing between the options needs the contents of a
+local file the question does not quote, no option is a true answer and the judge marks them
+all false. This makes a rejection the design already wanted into one the log can explain.
+Both wrong discards in the 47-probe backtest were exactly this shape: the judge took the
+stem's premises as given, reasoned on top of them, preferred a false option, and the probe
+was discarded for a reason that had nothing to do with what was wrong with it. The verdict
+was right and the diagnosis was noise. The no-option-true message now carries every option's
+reason for the same purpose — without it, "the mechanisms are all broken" and "only its
+author could answer this" are the same string.
+
+**What it costs: 3 of 15.** Re-running stage 4 over a sample of probes that had already
+*passed* it under the previous prompt discarded three. All three were local-file recall —
+"where does the data for `rf_events.jsonl` come from in the approved design", "what enforces
+the distinction after that edit in `agents/repo-finder.md`" — the shape "the question must
+teach something portable" already forbids and which nothing before this reliably caught. The
+twelve kept include probes anchored on `cmd/bd/create.go`, `ticks/reaper.py`, and
+`.github/dependabot.yml`, so the check does separate an artifact used as the setting from one
+the answer depends on. That is a ~20% yield cut on the current corpus, and it is a bug report
+against stage 3 rather than a price stage 4 charges: those probes should never have been
+written.
 
 **Why a check and not more prompt.** Stage 3 writes the question, all four options, the key,
 and the explanation in one call, in sequence, and never re-reads an early option against a
@@ -680,6 +746,27 @@ fails twice would do it on a schedule. Bounded to `PROBE_TTL_DAYS`, because a pr
 expired is a model call spent on something `next_probe` will never serve, and skipped
 entirely when the transcript has rotated — stage 3 needs the dialogue, not just the seed.
 
+**The reason is stored; the retry is still blind, and that is measured.** `sessions.discard_reason`
+holds why a session that had something to ask about produced no question: what stage 4 said
+when it threw the question away, or what stage 2 said was missing when it declined to write a
+seed. Both previously reached only `grask.log` — rotated at 1 MB, written by a detached
+worker, readable by nothing — which left "a second discard is a fact about the seed" resting
+on an attempt nobody had told what went wrong with the first, and left a rising decline rate
+with no way to tell stage 2 declining correctly from stage 2 declining everything.
+
+Feeding it back into stage 3 was the obvious next step, and it was built and then reverted.
+Both arms were run on the two discarded probes whose transcripts survived — same seed, same
+dialogue, the correction the only difference — and all four questions passed stage 4, the two
+blind re-runs included. The premise did not hold: re-running the prompt recovered both. n=2
+proves nothing in either direction, which is the point — it is not evidence *for* threading a
+`correction` parameter through three modules, and unproven code costs more than unproven
+prose. The column stays: the judgment is the only record of why a session produced no
+question, and filtered to `unverified` it is how the locality rate gets measured at all. Only
+populated for discards and declines from that point on. The verdict alone does not scope that
+query: `reprobe` clears neither the verdict nor the reason when a retry succeeds, so a rate
+counted off `verdict = 'unverified'` counts the redeemed seeds too — excluding them is the
+same `LEFT JOIN probes ... WHERE p.id IS NULL` that `unprobed_seeds` uses to find them.
+
 **What it cannot check.** The judge has no repository, so it can only adjudicate claims that
 are true away from this checkout. A probe whose answer turns on the contents of a local file
 is one it must take on the stem's premises — which is the same probe "portable past this
@@ -705,26 +792,59 @@ The taxonomy is a set of detectors for that invariant and is subordinate to it. 
 stops serving the invariant, the signal goes — it does not get to redefine the principle by
 being the thing that happens to be implemented.
 
-Four signals, defined in `triage.py` and ranked in `select.py`. The split that matters is
+Five signals, defined in `triage.py` and ranked in `select.py`. The split that matters is
 **whether a quote can prove the signal at all**:
 
 | Rank | Signal | Evidence | What it is |
 |---|---|---|---|
-| 0 | `asked_why` | quote-provable | They asked why. Their curiosity, not the agent's output. |
-| 1 | `pushed_back` | quote-provable | They corrected, overrode, or disagreed. Judgment showing. |
-| 2 | `new_pattern` | code-grounded | A pattern, library, or technique newly landed in their code. |
-| 3 | `explained_at_length` | code-grounded | The agent explained at length and they took it on board. |
+| 0 | `explained_it_back` | quote-provable | They put the mechanism in their own words and got it wrong. |
+| 1 | `asked_why` | quote-provable | They asked why. Their curiosity, not the agent's output. |
+| 2 | `pushed_back` | quote-provable | They corrected, overrode, or disagreed. Judgment showing. |
+| 3 | `new_pattern` | code-grounded | A pattern, library, or technique newly landed in their code. |
+| 4 | `explained_at_length` | code-grounded | The agent explained at length and they took it on board. |
 
-For the first two, the developer's own words *are* the evidence — a why-question or a
-correction is visible in the quote itself. For the second two the quote can only ever be
-circumstantial: a pattern landing in the codebase is shown by the code, not by anything the
-developer typed. Those are kept but flagged `weak_evidence`, and stage 2 has to ground them
-in the dialogue before they earn a question.
+For the first three, the developer's own words *are* the evidence — a why-question, a
+correction, or a mechanism restated wrongly is visible in the quote itself. For the last two
+the quote can only ever be circumstantial: a pattern landing in the codebase is shown by the
+code, not by anything the developer typed. Those are kept but flagged `weak_evidence`, and
+stage 2 has to ground them in the dialogue before they earn a question.
 
 **The ranking is derived, not asserted:** signals whose quote is self-proving come first,
 because preferring the others would make selection favour the weakest evidence available.
 The shorthand is **quiz what they were told, not what they told the agent** — a question they
 asked means an answer they received that nobody checked.
+
+**`explained_it_back` outranks even `asked_why`, because of what the evidence is evidence
+*of*.** Everything below rank 0 is a reason to suspect a gap; rank 0 is a gap. A why-question
+shows curiosity, and curiosity is perfectly compatible with having understood the answer. A
+mechanism restated wrongly *is* the misconception, in the developer's own words, with the
+wrong part visible. It was also the hole in the original four: `asked_why` is gated on the
+quote being a question, and a confident wrong statement corrects nobody, so it was not
+`pushed_back` either — the strongest evidence the transcript can hold had no signal to land
+on. The evidence rule is correspondingly stricter for it, and structurally so rather than by
+prompting: the quote must not be a question — a developer asking how something works is
+`asked_why` — and `shows` must be non-empty, because that is where the part they got wrong or
+left out gets named, and a moment claiming a misconception without naming one is a moment
+that would take the session's question with nothing behind it. The rule this module already
+lives by is that prompting a model to require a quote is not a control; checking the quote is.
+The highest-ranked signal is the last one that should have been exempt from it.
+
+**Demonstrated understanding disqualifies a moment.** The signals say what happened at a
+point in the session; a later turn can take it back. If the developer states the mechanism
+correctly in their own words at any point after the moment, the moment is dropped. A
+developer who asks "why do we need jitter here?" and later says "right, so the clients don't
+all retry at the same instant" has supplied the strongest evidence available that there is no
+gap here — and asking them anyway spends the session's one question on the topic with the
+most evidence they already know it. This bites hardest on `new_pattern` and
+`explained_at_length`, where nothing the developer typed was evidence of a gap to begin with.
+
+It bites on rank 0 too, and that is the case the wording has to be careful about, because it
+is the modal `explained_it_back` transcript: restate the mechanism wrongly, get corrected, say
+it back correctly. Read as an exemption — "a wrong restatement is `explained_it_back`, and
+that is the best moment in the session" — the rule would hand the session's one question to
+the mechanism the developer demonstrably just learned, which is precisely what it exists to
+prevent. A wrong restatement earns rank 0 only while nothing later in the session shows they
+now have it right.
 
 `rank_key` is `(signal_rank, -turn)`: signal first, then the latest turn, because with signal
 equal the more recent engagement is the one still fresh when the question arrives. It depends
@@ -745,7 +865,9 @@ consequence frame — a counterfactual ("X is keyed on Y; if Y stopped being uni
 breaks first?"), a constraint attribution ("which constraint forces the shuffle to happen at
 storage time?"), or the cost of the road taken. `new_pattern` and `explained_at_length` really
 are recall — something went past, or the agent explained and it was accepted — and keep the
-mechanism frame.
+mechanism frame. So does `explained_it_back`, despite outranking both judgment signals: the
+developer has already told you what they believe the mechanism is and they were wrong about
+it, so the mechanism is the thing to ask about.
 
 What does not vary is the invariant: exactly one correct option, grounded in the named
 artifact, portable past this repository. A frame chooses the shape of a question, never
@@ -759,11 +881,13 @@ dependency bumps, renames, lint fixes, a bug the developer diagnosed themselves,
 prose or commit messages, or a session where the developer only said "continue" and "fix it".
 That is activity, and activity is not learning.
 
-**A proposed re-cut, unbuilt.** An intent-shaped taxonomy — `definition_gap` ("what is X"),
-`asks_rationale` ("why X"), `counter_proposal` ("why not Y"), `asserts_belief` ("…right?") —
-splits the current `asked_why` into four and orders them by strength of acceptance evidence.
-It is a finer instrument for the same invariant and is not implemented; `triage.py` and
-`select.py` are the current taxonomy. It should not be built before the yes-rate exists,
+**A proposed re-cut, mostly unbuilt.** An intent-shaped taxonomy — `definition_gap` ("what is
+X"), `asks_rationale` ("why X"), `counter_proposal` ("why not Y"), `asserts_belief`
+("…right?") — splits the current `asked_why` into four and orders them by strength of
+acceptance evidence. Its `asserts_belief` arm is the one piece that shipped, as
+`explained_it_back`, because it was the arm the four-signal taxonomy could not express at
+all; the rest is a finer cut of moments that already have a signal. It is not implemented;
+`triage.py` and `select.py` are the current taxonomy. It should not be built before the yes-rate exists,
 because there would be nothing to evaluate the change against.
 
 If `definition_gap` is ever built, it needs a guard: ranking it first names the *moment*,

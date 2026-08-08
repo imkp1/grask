@@ -21,9 +21,10 @@ from pathlib import Path
 from grask.dialogue import extract_dialogue as _extract_dialogue
 from grask.llm import LLMError
 from grask.probe import probe as _probe
+from grask.seed import SeedDeclined
 from grask.seed import seed as _seed
 from grask.select import select
-from grask.storage import UNVERIFIED, Store, grask_home
+from grask.storage import DECLINED, UNVERIFIED, Store, grask_home
 from grask.transcript import extract
 from grask.triage import triage as _triage
 from grask.verify import ProbeUnverified
@@ -156,6 +157,36 @@ def capture_session(
         try:
             the_seed = seed(dialogue, moment)
             the_probe = probe(the_seed, dialogue)
+        except SeedDeclined as exc:
+            # Stage 2 looked and would not assert a misconception. Ahead of the
+            # `LLMError` below because it is a subclass of it, and because the
+            # two mean opposite things: that branch says the pipeline broke,
+            # this one says it worked and the answer was no.
+            #
+            # There is no seed to keep — a decline is the absence of one — but
+            # the call was still billed, so the spend lands in `discarded_usd`
+            # beside the unverified probes. Silence that costs money and reports
+            # $0.00 is how the cheapest-looking outcome becomes the one nobody
+            # notices spending.
+            #
+            # The reason lands in the column beside it for the reason stage 4's
+            # does: a rising decline rate is only diagnosable if what stage 2
+            # kept saying was missing is queryable, and the log rotates.
+            log(f"{session_id} stage 2 declined: {exc.reason}")
+            store.record_session(
+                session_id=session.session_id,
+                transcript_path=str(transcript_path),
+                cwd=session.cwd,
+                git_branch=session.git_branch,
+                verdict=DECLINED,
+                signal=verdict.signal,
+                topic=verdict.topic,
+                cost_usd=verdict.cost_usd,
+                duration_ms=verdict.duration_ms,
+                discarded_usd=exc.cost_usd,
+                discard_reason=exc.reason,
+            )
+            return
         except LLMError as exc:
             # Stage 2 or 3 gave up. This used to fall through to the catch-all
             # below, which writes an `error` row with no cost and no seed —
@@ -209,6 +240,11 @@ def capture_session(
                 cost_usd=verdict.cost_usd,
                 duration_ms=verdict.duration_ms,
                 discarded_usd=exc.cost_usd,
+                # Stored, not just logged. `reprobe` is what redeems this seed
+                # and the log is not a channel it can read — without the reason
+                # its second attempt re-runs the prompt that wrote the question
+                # stage 4 just refused, which is a re-roll rather than a retry.
+                discard_reason=exc.reason,
             )
             store.add_seed(the_seed)
             return
