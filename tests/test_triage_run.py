@@ -121,6 +121,37 @@ class TestTheSignalHistogram:
         assert "pushed_back" in out
 
 
+class TestTheDemotionLabel:
+    def test_a_full_demotion_is_not_described_as_a_bad_quote(self):
+        """`demoted_from_ask` means every moment was rejected, by any gate.
+
+        Five gates can do it: a quote missing from its turn, an unrecognized
+        signal, an `asked_why` that asks nothing, an `explained_it_back` that
+        asks rather than explains, and an `explained_it_back` with an empty
+        `shows`. Only the first is a bad quote. The mislabel is not cosmetic in
+        a report built to diagnose why rank 0 is scarce: on the first full-corpus
+        run every demotion was the `explained_it_back` question gate, and the
+        summary line called all three of them bad quotes.
+        """
+        out = report(
+            [
+                row(
+                    verdict="silent",
+                    signal=None,
+                    demoted_from_ask=True,
+                    moments=[],
+                    candidates=0,
+                    rejections=[
+                        "turn 1: signal is explained_it_back but shows names nothing wrong"
+                    ],
+                )
+            ]
+        )
+
+        assert "bad quote" not in out
+        assert "evidence gates" in out
+
+
 class TestTheRejectionTally:
     def test_a_gate_rejection_is_reported_with_its_reason(self):
         rejection = (

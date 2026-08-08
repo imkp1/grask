@@ -93,7 +93,14 @@ def report(rows: list[dict[str, Any]]) -> str:
         f"  kept (ask)     {len(kept):>4d}  ({len(kept) / max(len(rows), 1):.0%})",
         f"    of which evidence is code-grounded, not quoted  {len(weak):>3d}",
         f"  dropped        {len(dropped):>4d}  ({len(dropped) / max(len(rows), 1):.0%})",
-        f"    of which demoted for a bad quote  {len(demoted):>3d}",
+        # Not "bad quote": `demoted_from_ask` is set when *every* moment was
+        # rejected, and five gates can do that — a quote missing from its turn,
+        # an unrecognized signal, an `asked_why` that asks nothing, an
+        # `explained_it_back` that asks rather than explains, and an
+        # `explained_it_back` with an empty `shows`. Only the first is about the
+        # quote being bad. The tally below names which gate actually fired; this
+        # line only counts the sessions it emptied.
+        f"    of which fully demoted by evidence gates  {len(demoted):>3d}",
         f"    of which failed outright          {len(failed):>3d}",
         f"  cost           ${cost:.2f}   (${cost / max(len(rows), 1):.4f}/session)",
         f"  candidates     {sum(r['candidates'] for r in rows):>4d} moments across all sessions"

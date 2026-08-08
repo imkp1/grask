@@ -219,14 +219,22 @@ the thing they accepted actually works the way they think."""
 # decidable, and "is this option the developer's stated mechanism" is a semantic
 # judgement that could only be checked with a model call in the capture path —
 # which is a judge by another name.
+#
+# It points at the session and not at `{quotes}`, which is the seed's quote list
+# and carries no guarantee of holding the moment's own quote: `verified_quotes`
+# keeps whatever stage 2 claimed that appears in *some* developer turn, and stage
+# 2 chooses 1-3 freely. On a seed where it chose others, an instruction to look
+# in the quotes points stage 3 at nothing. The rendered dialogue always has the
+# account, because that is where triage found it.
 MISCONCEPTION_FRAME = """\
 Ask about the mechanism itself: what the API, tool, configuration, or algorithm
 does or requires. This developer put the mechanism into their own words and got
 part of it wrong — ask about the part they got wrong, as a question about how
 the thing behaves rather than about anything they said.
 
-One distractor must be their own account of the mechanism. It is in the quotes
-below, and it is the one wrong option you are not guessing at: a developer who
+One distractor must be their own account of the mechanism. It appears in the
+developer's words in the session below, and it is the one wrong option you are
+not guessing at: a developer who
 half-understood this would pick it, because one of them did. State it as a
 general claim about how the thing behaves — never their words quoted back,
 never "you said", never the second person at all. If their account is

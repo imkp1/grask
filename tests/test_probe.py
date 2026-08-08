@@ -423,6 +423,19 @@ class TestFraming:
         """
         assert "One distractor must be their own account" in MISCONCEPTION_FRAME
 
+    def test_the_frame_does_not_promise_the_quote_list_holds_the_misconception(self):
+        """There is no such invariant, and the frame must not claim one.
+
+        `seed.verified_quotes` keeps any claimed quote that appears in some
+        developer turn; nothing requires the selected moment's quote to be among
+        the 1-3 stage 2 chooses. Pointing stage 3 at the quote list for the
+        developer's account would, on the seeds where stage 2 picked other
+        quotes, point it at nothing. The dialogue is what carries the account,
+        and stage 3 receives all of it.
+        """
+        assert "in the quotes below" not in MISCONCEPTION_FRAME
+        assert "session below" in MISCONCEPTION_FRAME
+
     def test_the_misconception_distractor_is_still_required_to_be_false(self):
         """The sharpening instruction is where falseness is most at risk.
 
