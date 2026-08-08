@@ -17,14 +17,21 @@ versioning follows [SemVer](https://semver.org/) once there is a 1.0 to be compa
   true as far as it goes, so it is sharpened into the claim it would imply if taken as the
   whole mechanism rather than restated. Prompt-only: "is this option their stated mechanism"
   is a semantic judgement, and checking it in code means a model call in the capture path.
+  **Not shown to work.** A paired A/B over three real rank-0 seeds — one seed each, stage 3
+  forked twice, the frame text the only difference — recovered the misconception 3 of 3 with
+  the block and 2 of 3 without it, the third a near-miss rather than nothing. At n=3 that
+  detects nothing. Kept because it costs ~15 lines and the sample cannot rule out a modest
+  effect, which is the same verdict the distractor-shape block carries.
 - **Triage records every rejected moment, not only the ones that emptied a session.**
   `demoted_from_ask` says a session lost *all* of its moments; it names no gate and says
   nothing about a session that kept one moment and rejected another, which is most of them.
   `triage_run` now reports surviving moments by signal — every ranked signal, including those
   at zero — and tallies rejections by reason with the `turn N:` prefix stripped. Rare signal
   and over-strict gate were indistinguishable from the old report and need opposite fixes.
-  The corpus currently holds zero `explained_it_back` seeds, so whether rank 0 fires at all
-  is the open question, and this is the instrument for it.
+  Run over the whole corpus it found rank 0 firing on 4 of 38 kept sessions (~1 probe in 9),
+  and every rejection in 168 sessions — 3 of 3 — was `explained_it_back` on a quote that asks
+  rather than explains, each emptying its session. The model mislabels roughly 43% of its
+  rank-0 proposals; the gate is right and the stage-1 prompt should separate the two signals.
 - **The end-to-end test runs again.** `test_capture_smoke` is the only test that proves the
   four stages compose rather than each working alone, and it had been failing since stage 4
   landed: the `no_real_model_calls` guard added with it is autouse and refused the `calibration`

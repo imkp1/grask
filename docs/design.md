@@ -901,12 +901,37 @@ would imply if taken as the whole mechanism, rather than restated.
 It is prompt-only, and not a fifth structural gate. The four gates are all mechanically
 decidable; "is this option the developer's stated mechanism" is a semantic judgement, and
 checking it in code means a model call in the capture path, which is a judge by another
-name. Whether stage 3 obeys it is therefore a measurement, not a guarantee — and it cannot
-be measured yet, because the corpus contains no `explained_it_back` seeds at all. The signal
-shipped after every stored seed was captured. Whether rank 0 fires on real sessions is the
-prior question, and `triage_run` over the whole corpus is what answers it; if it fires and
-the distractor is still invented rather than recovered, that is the evidence for threading
-`shows` through to stage 3, which is not built.
+name.
+
+**It has not been shown to work, and the measurement is the reason the wording above is
+kept rather than the reason it was written.** Retrospective triage over the whole corpus
+(168 sessions with human turns) found rank 0 firing on 4 of 38 kept sessions — real traffic,
+about one probe in nine. Three reached stage 3; all three passed stage 4; all three put the
+developer's own belief in the options. But a paired A/B on those same three seeds — one
+seed each, stage 3 forked twice, the frame text the only difference — recovered the
+misconception 3 of 3 with this block and 2 of 3 without it, the third a near-miss rather
+than nothing. At n=3 that detects nothing, and the honest reading is that stage 3 was
+already doing most of this from the hypothesis alone. The block is kept because it costs
+~15 lines and the sample cannot rule out a modest effect, not because the effect was
+observed. This is the same verdict, on the same evidence budget, as the distractor-shape
+block above.
+
+**Threading `shows` is not built, and the same run is why.** Half the surviving rank-0
+moments were *incomplete* accounts rather than wrong ones, where the misconception is not in
+the quote at all — the case the extra field looked necessary for. Stage 2 covers it anyway:
+a hypothesis has to be falsifiable, so it restates an omission as a positive false belief,
+which is the form stage 3 needs. The field would duplicate work already done.
+
+**What the run did surface is upstream of all of it.** Every gate rejection in the corpus —
+3 of 3 — was `explained_it_back` on a quote that asks rather than explains, each one
+emptying its session, so the model mislabels roughly 43% of its rank-0 proposals as
+explanations when they are questions and the session loses a probe it should have kept as
+`asked_why`. And a fourth rank-0 moment died at a stage-2 decline because turn 0 was 2,173
+characters of pasted agent prose against turns of 3-34 characters elsewhere: the quote was
+verbatim in a developer turn, so the evidence rule passed, but it was not the developer's
+account. Rank 0 is uniquely exposed to that, because the signal *is* prose explaining a
+mechanism, which is what pasted output looks like. Both are stage 1 problems and both are
+worth more than another question shape.
 
 What does not vary is the invariant: exactly one correct option, grounded in the named
 artifact, portable past this repository. A frame chooses the shape of a question, never
