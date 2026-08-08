@@ -4,8 +4,15 @@ The output that matters is not whether this executes — it is whether a develop
 reading the kept/dropped split agrees with the calls. Sessions kept that were
 actually empty are the nagging failure mode showing up before a question exists.
 
+Costs money — one call per session — so it does not spend by default: without
+`--go` it prints the session count and stops.
+
 Usage:
-    uv run python -m grask.triage_run [--limit N] [--out PATH] [--workers N]
+    uv run python -m grask.triage_run [--limit N] [--out PATH] [--workers N] [--go]
+
+`--limit` takes the *newest* sessions. That measures the deployment window
+rather than the signal, and on this corpus it is also unnecessary: the whole
+thing is 168 sessions with human turns.
 """
 
 from __future__ import annotations
@@ -13,10 +20,12 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+from grask.select import SIGNAL_RANK
 from grask.storage import grask_home
 from grask.survey import load_corpus
 from grask.transcript import Session
@@ -43,9 +52,11 @@ def _row(session: Session, verdict: TriageVerdict) -> dict[str, Any]:
                 "topic": m.topic,
                 "quote": m.quote,
                 "weak_evidence": m.weak_evidence,
+                "relabelled_from": m.relabelled_from,
             }
             for m in verdict.moments
         ],
+        "rejections": list(verdict.rejections),
         "cost_usd": verdict.cost_usd,
         "duration_ms": verdict.duration_ms,
         "error": verdict.error,
@@ -53,6 +64,19 @@ def _row(session: Session, verdict: TriageVerdict) -> dict[str, Any]:
         "files": len(session.files_touched),
         "branch": session.git_branch,
     }
+
+
+def _gate(rejection: str) -> str:
+    """The reason a moment was thrown away, without the turn it happened on.
+
+    Every rejection is prefixed `turn N: ` so the moment can be found again.
+    Tallying the raw strings would report the same gate firing on four turns as
+    four separate one-off reasons, which is the opposite of the finding.
+    """
+    head, sep, tail = rejection.partition(": ")
+    if sep and head.startswith("turn ") and head[5:].isdigit():
+        return tail
+    return rejection
 
 
 def _clip(text: str | None, width: int) -> str:
@@ -77,11 +101,56 @@ def report(rows: list[dict[str, Any]]) -> str:
         f"  kept (ask)     {len(kept):>4d}  ({len(kept) / max(len(rows), 1):.0%})",
         f"    of which evidence is code-grounded, not quoted  {len(weak):>3d}",
         f"  dropped        {len(dropped):>4d}  ({len(dropped) / max(len(rows), 1):.0%})",
-        f"    of which demoted for a bad quote  {len(demoted):>3d}",
+        # Not "bad quote": `demoted_from_ask` is set when *every* moment was
+        # rejected, and five gates can do that — a quote missing from its turn,
+        # an unrecognized signal, an `asked_why` that asks nothing, an
+        # `explained_it_back` that asks rather than explains, and an
+        # `explained_it_back` with an empty `shows`. Only the first is about the
+        # quote being bad. The tally below names which gate actually fired; this
+        # line only counts the sessions it emptied.
+        f"    of which fully demoted by evidence gates  {len(demoted):>3d}",
         f"    of which failed outright          {len(failed):>3d}",
         f"  cost           ${cost:.2f}   (${cost / max(len(rows), 1):.4f}/session)",
         f"  candidates     {sum(r['candidates'] for r in rows):>4d} moments across all sessions"
         f"   (max {max((r['candidates'] for r in rows), default=0)} in one)",
+        "",
+        "-" * 78,
+        "SIGNALS — every surviving moment, not only the one selected per session",
+        "-" * 78,
+    ]
+    # Counted over moments rather than verdicts: selection keeps one per
+    # session, so a signal can fire all week and never appear as a verdict.
+    # Every ranked signal is printed even at zero — a signal missing from the
+    # output reads as "not measured", and "measured, never fired" is a finding.
+    found = Counter(m["signal"] for r in rows for m in r["moments"])
+    for signal in sorted(SIGNAL_RANK, key=lambda s: SIGNAL_RANK[s]):
+        lines.append(f"  {signal:<24}{found.get(signal, 0):>4d}")
+
+    # A relabel is neither a rejection nor a clean keep, and folded into the
+    # destination signal it is invisible — along with the mislabel rate, which
+    # is what says whether the stage-1 prompt separates the two signals.
+    moved = Counter(
+        m.get("relabelled_from") for r in rows for m in r["moments"] if m.get("relabelled_from")
+    )
+    for origin, count in moved.most_common():
+        lines.append(f"    of which relabelled from {origin:<14}{count:>4d}")
+
+    thrown = Counter(_gate(x) for r in rows for x in r.get("rejections", ()))
+    lines += [
+        "",
+        "-" * 78,
+        f"GATE REJECTIONS — {sum(thrown.values())} moments the evidence rule threw away",
+        "-" * 78,
+    ]
+    # A kept session can still have rejected a moment, and until these were
+    # recorded that was invisible. Rare signal and over-strict gate look
+    # identical from the counts above and need opposite fixes.
+    for reason, count in thrown.most_common():
+        lines.append(f"  {count:>4d}  {_clip(reason, 68)}")
+    if not thrown:
+        lines.append("  none")
+
+    lines += [
         "",
         "-" * 78,
         f"KEPT — {len(kept)} sessions grask would ask about",
@@ -126,6 +195,7 @@ def main() -> None:
     # to cwd once put a 69-session corpus into this repository's git history.
     parser.add_argument("--out", type=Path, default=grask_home() / "triage-results.json")
     parser.add_argument("--root", type=Path, default=None, help="transcript root")
+    parser.add_argument("--go", action="store_true", help="actually spend; otherwise dry run")
     args = parser.parse_args()
 
     sessions = [s for s in load_corpus(args.root) if s.turns]
@@ -133,6 +203,15 @@ def main() -> None:
         sessions = sessions[: args.limit]
     if not sessions:
         print("No sessions with human turns.")
+        return
+
+    # `capture_run` and `reprobe` both refuse to spend without `--go`, and this
+    # is the most expensive of the three: one call per session over the whole
+    # corpus, $10 on the first real run. It used to bill on invocation, which is
+    # a decision nobody made.
+    if not args.go:
+        print(f"{len(sessions)} sessions with human turns.")
+        print("Dry run. Re-run with --go to spend.")
         return
 
     print(f"triaging {len(sessions)} sessions on {args.workers} workers...", file=sys.stderr)

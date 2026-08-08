@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 from test_capture import a_probe, a_seed, ask_verdict, transcript
 
+import grask.llm
 from grask.capture import capture_session
 from grask.llm import complete
 from grask.storage import Store
@@ -37,6 +38,28 @@ def test_the_other_spelling_is_refused_too():
 
     with pytest.raises(BaseException, match="real model call"):
         subprocess.check_output(["claude", "-p", "hi"])
+
+
+@pytest.mark.calibration
+def test_a_calibration_test_may_reach_the_real_cli():
+    """The one test that is supposed to spend money.
+
+    The guard went in with stage 4 and refused every `claude` launch in the
+    suite, `calibration` included — so `test_capture_smoke` stopped proving the
+    four stages compose and started failing on the guard instead. Nothing
+    noticed, because it is deselected by default and the failure only appears
+    under `-m calibration`, which is the one run nobody does casually.
+
+    Deselected by default like every other calibration test, and free: it
+    asserts the guard is absent rather than launching anything.
+
+    It asserts on `__name__` and not on identity against `subprocess.run`:
+    `grask.llm.subprocess` *is* the `subprocess` module, so the fixture's
+    `monkeypatch.setattr` moves both sides of that comparison at once and it
+    holds whether the guard is installed or not.
+    """
+    assert grask.llm.subprocess.run.__name__ == "run"
+    assert grask.llm.subprocess.Popen.__name__ != "refuse"
 
 
 def test_a_subprocess_that_is_not_the_model_still_runs():

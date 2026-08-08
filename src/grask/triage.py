@@ -145,6 +145,14 @@ developer's own account of how the mechanism works, and `shows` must name the
 part they got wrong or left out — "they restated it" is not enough, because a
 correct restatement disqualifies the moment rather than earning one.
 
+Text the developer pasted is not the developer's account. A long block of
+report-style prose sitting in a turn — an agent's summary, a review, a spec, a
+plan — is quotable and says nothing about what this developer believes. The tell
+is the rest of the session: a large block of polished prose beside turns of a
+few words each is material they dropped in, not thinking they typed. Quote what
+they wrote about it, not the block. This matters most for `explained_it_back`,
+because prose explaining a mechanism is exactly what that signal looks like.
+
 ## Output
 
 Reply with a single JSON array and nothing else. Escape every quotation mark that
@@ -182,6 +190,11 @@ class Moment:
     # Kept, but on a signal the quote cannot prove. Recorded rather than dropped:
     # stage 2 has to ground these in the diff before they earn a question.
     weak_evidence: bool = False
+    # Set when the evidence rule moved this moment to a weaker signal instead of
+    # dropping it. Recorded so the mislabel rate stays visible: folded silently
+    # into the destination signal, the count that says whether stage 1 separates
+    # the two is unrecoverable.
+    relabelled_from: str = ""
 
 
 @dataclass
@@ -209,6 +222,13 @@ class TriageVerdict:
     # moment has already been asked about.
     moments: list[Moment] = field(default_factory=list)
     candidates: int = 0
+    # Every moment the evidence rule threw away, whatever the session's verdict.
+    # `demoted_from_ask` says a session lost *all* of its moments; it cannot say
+    # which gate fired, and it says nothing at all about a session that kept one
+    # moment and rejected another. That gap makes "is this signal rare, or is
+    # its gate too strict?" unanswerable for most sessions — two findings with
+    # opposite fixes, one a prompt problem and the other a gate problem.
+    rejections: list[str] = field(default_factory=list)
 
     @property
     def kept(self) -> bool:
@@ -304,19 +324,26 @@ def parse_moments(session: Session, completion: Completion) -> tuple[list[Moment
         if signal == "asked_why" and not Turn(text=quote, index=0).is_question:
             rejected.append(f"{label}: signal is asked_why but the quote asks nothing")
             continue
+        relabelled_from = ""
         if signal == "explained_it_back":
             # The highest-ranked signal, and the only quote-provable one that
-            # had nothing but the prompt behind it. Same reasoning as the check
-            # above: a developer asking how something works is `asked_why`, not
-            # an account of the mechanism, and `shows` is where the wrong part
-            # gets named — blank, the moment claims a misconception without
-            # saying what it is, and `select` would still hand it the session.
+            # had nothing but the prompt behind it. A developer asking how
+            # something works is `asked_why`, not an account of the mechanism,
+            # and `shows` is where the wrong part gets named — blank, the moment
+            # claims a misconception without saying what it is, and `select`
+            # would still hand it the session.
+            #
+            # A question is demoted, not dropped. This was the only gate firing
+            # on the corpus — 3 of 7 rank-0 proposals across 168 sessions, each
+            # one emptying its session — and dropping was throwing away a moment
+            # `asked_why` would have kept, since a question is exactly what that
+            # signal's own gate requires. Demoted and never promoted: rank 0 is
+            # the claim the quote failed to support, so it cannot keep rank 0's
+            # precedence, and the worst case is a question about the topic the
+            # developer asked about, which is what rank 1 does anyway.
             if Turn(text=quote, index=0).is_question:
-                rejected.append(
-                    f"{label}: signal is explained_it_back but the quote asks rather than explains"
-                )
-                continue
-            if not shows:
+                signal, relabelled_from = "asked_why", "explained_it_back"
+            elif not shows:
                 rejected.append(
                     f"{label}: signal is explained_it_back but shows names nothing wrong"
                 )
@@ -330,6 +357,7 @@ def parse_moments(session: Session, completion: Completion) -> tuple[list[Moment
                 quote=quote,
                 shows=shows,
                 weak_evidence=signal in CODE_GROUNDED,
+                relabelled_from=relabelled_from,
             )
         )
 
@@ -387,6 +415,9 @@ def triage(session: Session) -> TriageVerdict:
         verdict="silent",
         moments=moments,
         candidates=len(moments),
+        # Set before selection, so a rejection survives a session that kept
+        # something else. Only the fully-demoted branch used to see these.
+        rejections=rejected,
         cost_usd=completion.cost_usd,
         duration_ms=completion.duration_ms,
     )

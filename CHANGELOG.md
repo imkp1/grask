@@ -6,7 +6,56 @@ SQLite schema under `GRASK_HOME` carries no migration guarantee yet.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/) once there is a 1.0 to be compatible with.
 
-## Unreleased
+## 0.1.0-rc8
+
+- **The developer's own wrong account becomes one of the options.** On `explained_it_back` —
+  and only there — stage 3 is required to make one distractor the mechanism as the developer
+  stated it. Every other signal leaves it guessing at what a half-understanding looks like;
+  rank 0 has one in the transcript already, wrong, and the design puts the whole burden of
+  multiple choice on the distractors. It is paraphrased, never quoted, because grask does not
+  show a developer their own mistake, and it must be false — an incomplete account is often
+  true as far as it goes, so it is sharpened into the claim it would imply if taken as the
+  whole mechanism rather than restated. Prompt-only: "is this option their stated mechanism"
+  is a semantic judgement, and checking it in code means a model call in the capture path.
+  **Not shown to work.** A paired A/B over three real rank-0 seeds — one seed each, stage 3
+  forked twice, the frame text the only difference — recovered the misconception 3 of 3 with
+  the block and 2 of 3 without it, the third a near-miss rather than nothing. At n=3 that
+  detects nothing. Kept because it costs ~15 lines and the sample cannot rule out a modest
+  effect, which is the same verdict the distractor-shape block carries.
+- **Triage records every rejected moment, not only the ones that emptied a session.**
+  `demoted_from_ask` says a session lost *all* of its moments; it names no gate and says
+  nothing about a session that kept one moment and rejected another, which is most of them.
+  `triage_run` now reports surviving moments by signal — every ranked signal, including those
+  at zero — and tallies rejections by reason with the `turn N:` prefix stripped. Rare signal
+  and over-strict gate were indistinguishable from the old report and need opposite fixes.
+  Run over the whole corpus it found rank 0 firing on 4 of 38 kept sessions (~1 probe in 9),
+  and every rejection in 168 sessions — 3 of 3 — was `explained_it_back` on a quote that asks
+  rather than explains, each emptying its session. The model mislabels roughly 43% of its
+  rank-0 proposals.
+- **A question labelled `explained_it_back` is now demoted to `asked_why`, not dropped.** That
+  was the only gate firing on the corpus, and every rejection emptied its session — while a
+  question is exactly what `asked_why`'s own gate requires, so the moment was real and only
+  its label was wrong. Demoted and never promoted: rank 0 is the claim the quote failed to
+  support. An empty `shows` is still a rejection, since no weaker signal accepts it.
+  `Moment.relabelled_from` keeps the mislabel rate visible instead of folding it into rank 1.
+- **`triage_run` no longer spends on invocation.** `capture_run` and `reprobe` both dry-run
+  without `--go`; this one did not, and it is the most expensive of the three — one call per
+  session, $10 across the corpus.
+- **Stage 1 is told that pasted prose is not the developer's account.** A rank-0 moment was
+  lost to a stage-2 decline on a session with 2,173 characters of pasted agent report in turn
+  0 and 3-34 character turns elsewhere: verbatim in a developer turn, so the evidence rule
+  passed, but not something the developer believed. There is no structural fix — Claude Code
+  inlines pasted text with no marker, and a length heuristic would fire on anyone who writes
+  long prompts — so this is prompt-only and **unmeasured**.
+- **The end-to-end test runs again.** `test_capture_smoke` is the only test that proves the
+  four stages compose rather than each working alone, and it had been failing since stage 4
+  landed: the `no_real_model_calls` guard added with it is autouse and refused the `calibration`
+  run too. Underneath that sat a second break — it asserted `probes.criteria` was non-empty,
+  a NOT NULL column left from the judge design that `add_probe` writes `[]` into on every row,
+  so no probe has satisfied it since multiple choice replaced the judge. Both were invisible
+  because calibration is deselected by default. It now asserts the answer key instead — option
+  count, no duplicates, an index naming a real option, a non-empty explanation — and a real run
+  passes at $0.73.
 
 - **Why a probe was discarded is stored, not only logged.** `sessions.discard_reason` holds stage
   4's judgment, which previously reached `grask.log` and stopped — rotated at 1 MB, written by a

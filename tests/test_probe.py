@@ -412,6 +412,52 @@ class TestFraming:
         assert frame is not MECHANISM_FRAME
         assert "their own words" in frame
 
+    def test_the_misconception_becomes_one_of_the_distractors(self):
+        """The one signal where a wrong option does not have to be invented.
+
+        Every other signal leaves stage 3 guessing at what a half-understanding
+        would look like, from the taxonomy of wrongness in the prompt. Rank 0
+        has the developer's own account of the mechanism, already known to be
+        wrong — the distractor a developer who half-understood this would pick,
+        because one of them did.
+        """
+        assert "One distractor must be their own account" in MISCONCEPTION_FRAME
+
+    def test_the_frame_does_not_promise_the_quote_list_holds_the_misconception(self):
+        """There is no such invariant, and the frame must not claim one.
+
+        `seed.verified_quotes` keeps any claimed quote that appears in some
+        developer turn; nothing requires the selected moment's quote to be among
+        the 1-3 stage 2 chooses. Pointing stage 3 at the quote list for the
+        developer's account would, on the seeds where stage 2 picked other
+        quotes, point it at nothing. The dialogue is what carries the account,
+        and stage 3 receives all of it.
+        """
+        assert "in the quotes below" not in MISCONCEPTION_FRAME
+        assert "session below" in MISCONCEPTION_FRAME
+
+    def test_the_misconception_distractor_is_still_required_to_be_false(self):
+        """The sharpening instruction is where falseness is most at risk.
+
+        An incomplete account is often true as far as it goes, and a true
+        option is what `verify` discards the probe for — two true options and
+        no key. Sharpening exists to keep the distractor false; saying so is
+        what stops it drifting into "state what they said" on a partial account.
+        """
+        assert "must be false" in MISCONCEPTION_FRAME
+
+    def test_no_other_frame_asks_for_the_developers_own_account(self):
+        """`shows` is not threaded to stage 3, so this rule leans on the quotes
+        the seed carries. On any other signal those quotes are a why-question or
+        a correction, not an account of a mechanism — asking for a distractor
+        built from them would invite one that is merely off-topic."""
+        misconception = build_prompt(replace(SEED, signal="explained_it_back"), DIALOGUE)
+        assert "One distractor must be their own account" in misconception
+
+        for signal in ("asked_why", "pushed_back", "new_pattern", "explained_at_length"):
+            other = build_prompt(replace(SEED, signal=signal), DIALOGUE)
+            assert "One distractor must be their own account" not in other
+
     def test_every_ranked_signal_has_a_frame(self):
         """A signal `select` can rank but stage 3 cannot frame would silently
         fall back, which is the drift this catches."""
