@@ -8,12 +8,12 @@
 One question about your own code, when you finish coding.
 
 You can't tell the difference between understanding something and having watched it happen.
-Shipping code used to force the issue — you couldn't ship what you didn't understand,
-because it wouldn't run. That forcing function is gone.
+Shipping code used to force the issue — you couldn't ship what didn't work, and making it
+work meant understanding it at least once. That forcing function is gone.
 
 grask watches your Claude Code sessions end and usually asks nothing. When it does ask, it
 asks exactly one multiple-choice question about the mechanism you shipped, the next time
-you run `/grask`.
+you run `/grask:grask`.
 
 > **Most sessions produce no question. That silence is the feature** — not a failure to
 > find something.
@@ -22,12 +22,12 @@ you run `/grask`.
 
 ## Example
 
-The same probe as text. `/grask` inside Claude Code asks it through the native question UI
-instead.
+`/grask:grask` asks this through Claude Code's native question UI, as in the recording
+above. The same probe rendered as text, from the command the skill calls underneath:
 
 ```
-$ grask
-from 2026-07-21 · retry backoff in the webhook dispatcher
+$ ~/.claude/grask/grask
+from 2026-08-08 · retry backoff in the webhook dispatcher
 
 Your retry loop sleeps 2**attempt seconds between attempts. Why does adding random
 jitter matter more as the number of clients grows?
@@ -49,102 +49,56 @@ call and no judge to argue with.
 
 ## Install
 
-Both paths need the [Claude Code CLI](https://claude.com/claude-code) already installed and
-authenticated. grask has no runtime dependencies and needs no second API key — it shells
-out to the `claude` binary you already use. They are two ways in, not two products: each
-wires the same `SessionEnd` capture hook and the same `/grask` skill.
+Needs the [Claude Code CLI](https://claude.com/claude-code) already installed and
+authenticated, plus a `python3` (≥ 3.8) on your PATH. grask has no runtime dependencies and
+needs no second API key — it shells out to the `claude` binary you already use.
 
-### As a plugin (recommended)
-
-Needs a `python3` (≥ 3.8) on your PATH. Inside Claude Code:
+Inside Claude Code:
 
 ```
 /plugin marketplace add imkp1/grask
 /plugin install grask
 ```
 
-That is the whole setup — no `settings.json` editing, no separate `pip` install, no `uv`.
-The plugin carries grask's source under `src/` and runs it with plain `python3`; grask has no
-third-party dependencies, so there is no virtualenv and no build step. A `SessionStart` step
-writes a small shim so the `/grask` skill can find the plugin's copy of grask. If your `python3`
-is older than 3.8, `grask doctor` will say so. The skill is namespaced by the runtime, so you
-type `/grask:grask`.
+That is the whole setup — no `settings.json` editing, no `pip`, no `uv`. The plugin carries
+grask's source under `src/` and runs it with plain `python3`; grask has no third-party
+dependencies, so there is no virtualenv and no build step. It wires the `SessionEnd` capture
+hook and the `/grask:grask` skill, and a `SessionStart` step writes a small shim at
+`~/.claude/grask/grask` so the skill can find the plugin's copy of grask. If your `python3`
+is older than 3.8, `~/.claude/grask/grask doctor` will say so.
 
-### Standalone
-
-For the bare `grask` command line, or if you'd rather not run a plugin:
-
-```bash
-uv tool install grask --prerelease=allow
-grask install
-```
-
-Only pre-release versions are published so far, hence the flag — plain
-`uv tool install grask` will find nothing. `pipx install --pip-args=--pre grask` works the
-same way, as does `uv tool install .` from a clone. Install as a *tool*, not with `uv sync`:
-both surfaces invoke grask by name, so it has to resolve without a path.
-
-`grask install` writes the `/grask` skill and merges the `SessionEnd` hook into your
-`~/.claude/settings.json` — idempotently, and leaving anything else in that file alone.
-`grask uninstall` reverses both (your captured data is left in place), and `grask doctor`
-checks the wiring and the environment it needs.
+The skill is namespaced by the runtime, so you type `/grask:grask`, not `/grask`.
 
 ### Updating
 
-Neither path updates itself, and both hold a *copy* of the `/grask` skill — so a new
-release reaches you only when you refresh that copy.
-
-Plugin:
+The plugin does not update itself, and it holds a *copy* of the skill — so a new release
+reaches you only when you refresh that copy:
 
 ```
 /plugin marketplace update grask
 /reload-plugins
 ```
 
+If the version still reads as the old one afterwards, the install is pinned to the version
+directory it was installed from. From a shell, `claude plugin update grask@grask` repoints
+it, and `claude plugin list` reports what you are actually on.
+
 Claude Code disables auto-update for third-party marketplaces by default, and only ships an
 update when the plugin's `version` field changes — which every grask release bumps, so the
 plugin cache path changes with it and you get a clean refetch rather than a silent no-op.
 
-Standalone:
-
-```bash
-uv tool upgrade grask --prerelease=allow
-grask install
-```
-
-Run `grask install` again after the upgrade. It is idempotent, and it is what rewrites
-`~/.claude/skills/grask/SKILL.md` — upgrading the package alone leaves the previous skill
-file sitting in your skills directory. `grask doctor` will tell you what is wired and what
-is not.
-
 The capture hook spawns a detached worker and returns immediately — it never blocks the end
 of your session, and it never speaks. Failures go to `~/.claude/grask/grask.log`, never to
-your terminal. If capture ever seems off, `grask doctor` is the one place that will tell you
-why.
+your terminal. If capture ever seems off, `~/.claude/grask/grask doctor` is the one place
+that will tell you why.
 
-### Approving the two commands it runs
+### The two commands it runs
 
-**If you installed the plugin, there is nothing to do here.** The plugin ships a
-`PreToolUse` hook that approves exactly `~/.claude/grask/grask serve` and
-`… record`, with the flags those two take, and stays silent about every other
-command in your session. Without it a single probe costs two or three approval
-taps — `serve`, `record`, `serve` again — which is more taps than the probe has
-answers.
-
-The rest of this section is for a **standalone `pip install grask`**, which has no
-plugin hooks and so still prompts. To approve the two calls once instead of every
-session, add them to the `allow` list in `~/.claude/settings.json`:
-
-```json
-{
-  "permissions": {
-    "allow": [
-      "Bash(~/.claude/grask/grask serve --json)",
-      "Bash(~/.claude/grask/grask record:*)"
-    ]
-  }
-}
-```
+There is nothing to approve. The plugin ships a `PreToolUse` hook that approves
+exactly `~/.claude/grask/grask serve` and `… record`, with the flags those two
+take, and stays silent about every other command in your session. Without it a
+single probe would cost two or three approval taps — `serve`, `record`, `serve`
+again — which is more taps than the probe has answers.
 
 Those two are the skill's entire interface: `serve` prints the next question and
 writes nothing, `record` grades one answer. Neither takes input from the model
@@ -152,18 +106,22 @@ beyond a probe id and your pick.
 
 ## Use
 
+```
+/grask:grask       # ask the next pending question, or say there's nothing
+```
+
 ```bash
-grask          # ask the next pending question, or say there's nothing
-grask stats    # what it has asked you, and how it went
+~/.claude/grask/grask stats     # what it has asked you, and how it went
+~/.claude/grask/grask doctor    # what is wired, and what is not
 ```
 
 You get one question, three or four options, and one line of orientation about which
-session it came from. Pick a letter. `enter` skips. `/wrong` rejects the premise if the
+session it came from. Pick an option. "Other" takes `skip`, or `wrong: <what's off>` if the
 question misreads what happened.
 
 Questions expire after 7 days. A probe about work you did last week is a quiz.
 
-`grask stats` is read-only and free — it asks nothing and consumes nothing. It prints
+`stats` is read-only and free — it asks nothing and consumes nothing. It prints
 counts and the questions you were recently asked, and deliberately no percentage: one
 probe cannot identify understanding, so a score over a handful of them asserts something
 grask does not know, and turns a twenty-second check into a number to protect.
@@ -227,11 +185,11 @@ once they close the file.
 grask names no model: it calls `claude -p` with no `--model` flag, so every stage runs on
 whatever you have selected and there is no second credential to manage. Its own prompts are
 small, and stages 2 and 3 only run on the minority of sessions triage keeps. Measured costs
-are in [`docs/design.md`](docs/design.md#measured-cost-2026-07-20-107-session-corpus).
+are in [`docs/design.md`](docs/design.md#five-stages-one-invocation), stage by stage.
 
 ## Status
 
-Alpha, and honest about it. The capture pipeline, storage, both delivery surfaces, and
+Alpha, and honest about it. The capture pipeline, storage, the question UI, and
 mechanical grading all work end to end.
 
 Not built, in the order they matter: the one-keypress *"was this worth asking?"* vote, which
