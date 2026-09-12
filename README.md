@@ -199,6 +199,8 @@ wrong, which is the half [`IDEA.md`](IDEA.md) argues matters most.
 
 [`docs/design.md`](docs/design.md) has the reasoning behind each decision;
 [`IDEA.md`](IDEA.md) covers what this is and the ways it might not work.
+[The code my agent writes is good. The decisions inside it aren't always mine.](https://kprateek.com/writing/grask.html)
+is the essay version — why grask exists, and why I chose multiple choice over an AI grader.
 
 ## Contributing
 
@@ -216,3 +218,5 @@ For anything where grask leaked, over-collected, or wrote outside `GRASK_HOME`, 
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+Built by [Kumar Prateek](https://kprateek.com).
